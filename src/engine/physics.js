@@ -53,7 +53,7 @@ export class PhysicsWorld {
         .setTranslation(x, y, z)
         .setLinearDamping(CONFIG.ball.linearDamping)
         .setAngularDamping(CONFIG.ball.angularDamping)
-        .setCanSleep(false)   // balls stay live so the rotor always has a bed
+        .setCanSleep(true)    // balls CAN rest; the mixer wakes them only while drawing
         .setCcdEnabled(true),
     );
     const desc = RAPIER.ColliderDesc.ball(CONFIG.ball.radius)

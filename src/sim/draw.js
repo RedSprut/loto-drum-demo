@@ -25,6 +25,21 @@ export const State = Object.freeze({
 const TRANSIT_SECONDS = 2.2;
 const smoothstep = (t) => t * t * (3 - 2 * t);
 
+/** SINGLE source of truth for which force subsystems may act in each state.
+ *  In IDLE / FINAL_SETTLING / COMPLETE nothing artificial is allowed — only
+ *  gravity + collisions + friction + damping. */
+export function getActiveForcePolicy(state) {
+  const mixing = state === State.STARTUP || state === State.MIXING || state === State.CAPTURING
+    || state === State.TRANSIT || state === State.DISPLAY || state === State.RELOAD;
+  return {
+    mixer: mixing,                 // rotor + secondary + air field + anti-stall
+    suction: state === State.CAPTURING,
+    // The analytic containment wall is the drum boundary; it is only needed while
+    // balls can reach the wall (mixing) or are draining down (STOPPING/settling).
+    wall: mixing || state === State.STOPPING || state === State.FINAL_SETTLING,
+  };
+}
+
 export class DrawController {
   constructor({ balls, drum, rotor, exit, camera }, hooks = {}) {
     this.balls = balls; this.drum = drum; this.rotor = rotor; this.exit = exit; this.camera = camera;
@@ -60,7 +75,9 @@ export class DrawController {
     this.groupIndex = 0; this.idxInGroup = 0;
     this.resultsByPool = {};
     for (const id of Object.keys(this.pools)) this.resultsByPool[id] = [];
-    this.winner = null; this.rotor.reset(); this.rotor.setSolid(true); this.drum.setWallSolid(true); this.rotor.setSpeed(CONFIG.rotor.speedIdle);
+    // IDLE: rotor is a static, pass-through decoration so freshly spawned balls
+    // fall straight to the bottom and rest (no piling on the shaft, no forces).
+    this.winner = null; this.rotor.reset(); this.rotor.setSolid(false); this.drum.setWallSolid(true); this.rotor.setSpeed(CONFIG.rotor.speedIdle);
     this.drum.closeGate();
     this._set(State.IDLE);
   }
@@ -95,6 +112,10 @@ export class DrawController {
   update(dt) {
     this.timer += dt;
     switch (this.state) {
+      case State.IDLE:
+        // Let freshly spawned balls settle and go to sleep. NO forces here.
+        this.balls.updateSettling(dt);
+        break;
       case State.STARTUP:
         this._driveMixer(dt);
         if (this.timer > CONFIG.draw.startupSeconds) this._set(State.MIXING);
@@ -121,20 +142,19 @@ export class DrawController {
         if (this.timer > CONFIG.draw.reloadSeconds) this._set(State.MIXING);
         break;
       case State.STOPPING:
-        // Rotor coasts to a stop (sweeping balls off its arms). NO mixer, NO air,
-        // NO anti-stall/suction — every artificial force is already off here.
+        // Rotor coasts to a stop. NO mixer, NO air, NO anti-stall/suction — every
+        // artificial force is off here (balls keep whatever velocity they had and
+        // fall; they are woken ONCE on entering FINAL_SETTLING, not every frame).
         this.rotor.setSpeed(0, 0);
-        this.balls.wakeActive();
         if (this.timer > CONFIG.draw.stoppingSeconds) {
-          this.balls.restoreDynamic(); // remaining balls: dynamic, full gravity, free
+          this.balls.restoreDynamic(); // remaining balls: dynamic, full gravity, woken once
           this._set(State.FINAL_SETTLING);
         }
         break;
       case State.FINAL_SETTLING:
-        // Only gravity + collisions now. End when every remaining ball is at rest
-        // in the bottom of the sphere (physical condition), with a safety cap.
+        // Only gravity + collisions + friction + damping now. Balls fall, collide,
+        // settle and are allowed to SLEEP. End once nothing is suspended and calm.
         this.rotor.setSpeed(0, 0);
-        this.balls.wakeActive();      // never let a ball doze off mid-air
         this.balls.updateSettling(dt);
         {
           const st = this.balls.settleStatus();

@@ -19,7 +19,7 @@ import { Drum } from './scene/drum.js';
 import { Rotor } from './scene/rotor.js';
 import { Balls } from './scene/balls.js';
 import { Exit } from './scene/exit.js';
-import { DrawController, State } from './sim/draw.js';
+import { DrawController, State, getActiveForcePolicy } from './sim/draw.js';
 import { CameraDirector } from './ui/director.js';
 import { HUD } from './ui/hud.js';
 
@@ -99,7 +99,7 @@ async function main() {
   function stepSim(dt) {
     balls.resetForces(); // clear last frame's forces so stale mixing forces can't linger
     draw.update(dt);     // kinematic targets + forces BEFORE the step
-    balls.applyWall();   // smooth analytic drum wall (all states)
+    if (getActiveForcePolicy(draw.state).wall) balls.applyWall(); // drum wall only while balls can reach it
     rotor.update(dt);
     physics.step(dt);
     balls.clampSpeeds();
@@ -166,6 +166,19 @@ async function main() {
       return;
     }
 
+    // Calm-start check: no draw started; after `sec` the machine must be at rest.
+    if (shot === 'idlecheck') {
+      const sec = parseFloat(params.get('sec') || '3');
+      for (let i = 0; i < Math.round(sec / dt); i++) stepSim(dt);
+      const a = balls.items.filter((it) => !it.drawn && !it.parked);
+      let mv = 0, asleep = 0; for (const it of a) { const v = it.body.linvel(); if (Math.hypot(v.x, v.y, v.z) > 0.1) mv++; if (it.body.isSleeping()) asleep++; }
+      const ss = balls.settleStatus();
+      console.log(`IDLECHECK t=${sec}s state=${draw.state} rotorP=${rotor.speedPrimary.toFixed(3)} rotorS=${rotor.speedSecondary.toFixed(3)} movingBalls=${mv} suspended=${ss.suspended} asleep=${asleep}/${a.length} maxY=${ss.maxY.toFixed(2)}`);
+      director.update(1, draw.state, focus); director.snap();
+      requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+      return;
+    }
+
     // Full-draw ball-count audit: logs the count trace + uniqueness + suspended.
     if (shot === 'counttest') {
       draw.start();
@@ -187,6 +200,13 @@ async function main() {
       }
       const ss = balls.settleStatus();
       console.log(`SUSPENDED ballsSuspendedAboveBottom=${ss.suspended} maxY=${ss.maxY.toFixed(2)} allSettled=${ss.allSettled} results=${JSON.stringify(draw.resultsByPool)}`);
+      // Verify the machine is truly stopped: wait 5 s in COMPLETE and re-measure.
+      for (let i = 0; i < Math.round(5 / dt); i++) stepSim(dt);
+      const a = balls.items.filter((it) => !it.drawn && !it.parked);
+      let mv = 0, asleep = 0, kin = 0;
+      for (const it of a) { const v = it.body.linvel(); if (Math.hypot(v.x, v.y, v.z) > 0.1) mv++; if (it.body.isSleeping()) asleep++; if (it.body.bodyType() !== physics.RAPIER.RigidBodyType.Dynamic) kin++; }
+      const ss2 = balls.settleStatus();
+      console.log(`AFTERCOMPLETE +5s state=${draw.state} rotorP=${rotor.speedPrimary.toFixed(3)} rotorS=${rotor.speedSecondary.toFixed(3)} movingBalls=${mv} suspended=${ss2.suspended} kinematicInDrum=${kin} asleep=${asleep}/${a.length} maxY=${ss2.maxY.toFixed(2)}`);
       balls.snapFacing(engine.camera); hud.sortResults(false);
       director.update(1, draw.state, focus); director.snap();
       requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });

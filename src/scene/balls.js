@@ -201,12 +201,6 @@ export class Balls {
     for (const it of this.items) if (!it.parked && it.body.isSleeping()) it.body.wakeUp();
   }
 
-  /** Unconditionally wake every in-drum ball (used during shutdown so nothing
-   *  can doze off mid-air on a wall facet). */
-  wakeActive() {
-    for (const it of this.items) if (!it.drawn && !it.parked) it.body.wakeUp();
-  }
-
   /** In-play items (not drawn, not parked). */
   activeItems() {
     const out = [];
@@ -349,14 +343,22 @@ export class Balls {
     }
   }
 
-  /** Accumulate per-ball "at rest" time (used to detect full settling). */
+  /** Accumulate per-ball "at rest" time and, once a ball is genuinely settled,
+   *  clear its microscopic jitter and let it SLEEP (a truly static final frame). */
   updateSettling(dt) {
     const S = CONFIG.settle;
     for (const it of this.items) {
       if (it.drawn || it.parked) continue;
+      if (it.body.isSleeping()) { it.settledTime = S.hold; continue; }
       const v = it.body.linvel(), w = it.body.angvel();
       const lin = Math.hypot(v.x, v.y, v.z), ang = Math.hypot(w.x, w.y, w.z);
       it.settledTime = (lin < S.linThresh && ang < S.angThresh) ? (it.settledTime || 0) + dt : 0;
+      // A resting ball (can't hover under gravity) → zero the jitter and sleep.
+      if (it.settledTime > 0.8 && lin < 0.05 && ang < 0.08) {
+        it.body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+        it.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+        it.body.sleep?.();
+      }
     }
   }
 
