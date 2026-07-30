@@ -1,0 +1,188 @@
+/**
+ * Orchestrator: boots physics + rendering, assembles the spherical gravity-mix
+ * machine, wires the HUD + camera director, loads a game profile, and runs the
+ * fixed-order sim/render loop.
+ *
+ * Loop order matters: draw logic (kinematic winner + anti-stall forces + wake)
+ * and the rotor both act BEFORE the physics step; meshes sync AFTER it.
+ *   draw.update → rotor.update → physics.step → balls.sync → director → render
+ */
+import * as THREE from 'three';
+import { CONFIG } from './config.js';
+import { GAME_PROFILES, DEFAULT_PROFILE } from './games.js';
+import { FrameStats } from './util/stats.js';
+import { QualityManager } from './engine/quality.js';
+import { RenderEngine } from './engine/renderer.js';
+import { initRapier, PhysicsWorld } from './engine/physics.js';
+import { buildStudio } from './scene/studio.js';
+import { Drum } from './scene/drum.js';
+import { Rotor } from './scene/rotor.js';
+import { Balls } from './scene/balls.js';
+import { Exit } from './scene/exit.js';
+import { DrawController, State } from './sim/draw.js';
+import { CameraDirector } from './ui/director.js';
+import { HUD } from './ui/hud.js';
+
+const params = new URLSearchParams(location.search);
+const boot = document.getElementById('boot');
+const fail = (msg) => { if (boot && !boot.dataset.done) { boot.textContent = msg; boot.classList.add('error'); } };
+window.addEventListener('error', (e) => fail('Error: ' + (e.message || e.error)));
+window.addEventListener('unhandledrejection', (e) => fail('Rejection: ' + (e.reason?.message || e.reason)));
+
+async function main() {
+  const canvas = document.getElementById('stage');
+  const debug = params.get('debug') === '1';
+  const debugPhysics = params.get('debugPhysics') === '1';
+
+  try { await initRapier(); }
+  catch (e) { fail('Failed to initialise physics engine.'); throw e; }
+
+  const quality = new QualityManager();
+  const qParam = params.get('q');
+  if (qParam && quality.presets[qParam]) quality.lock(qParam);
+
+  let engine;
+  try { engine = new RenderEngine(canvas, quality.preset); }
+  catch (e) { fail('WebGL2 is required for this demo.'); throw e; }
+
+  const physics = new PhysicsWorld();
+
+  // ── Scene ──
+  buildStudio(engine.scene);
+  const drum = new Drum(engine.scene, physics);
+  const rotor = new Rotor(engine.scene, physics, { debug: debugPhysics });
+  const balls = new Balls(engine.scene, physics, quality.preset.ballSeg);
+  const exit = new Exit(engine.scene);
+
+  const director = new CameraDirector(engine.camera);
+  const stats = new FrameStats();
+  const focus = new THREE.Vector3();
+
+  let hud;
+  const draw = new DrawController({ balls, drum, rotor, exit, camera: engine.camera }, {
+    onLayout: (profile) => hud?.buildLayout(profile),
+    onState: (s, w) => hud?.setPhase(s, w),
+    onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
+    onDone: () => {},
+  });
+
+  const profileKey = GAME_PROFILES[params.get('profile')] ? params.get('profile') : DEFAULT_PROFILE;
+
+  hud = new HUD(document.getElementById('hud'), {
+    onStart: () => draw.start(),
+    onReset: () => draw.reset(),
+    onQuality: (v) => { if (v === 'auto') quality.unlock(); else quality.lock(v); },
+    onProfile: (key) => { if (GAME_PROFILES[key]) draw.loadProfile(GAME_PROFILES[key]); },
+  }, { debug, profileKey });
+
+  draw.loadProfile(GAME_PROFILES[profileKey]);
+
+  quality.onChange((preset) => engine.applyPreset(preset));
+  const onResize = () => engine.resize();
+  window.addEventListener('resize', onResize);
+  window.addEventListener('orientationchange', () => setTimeout(onResize, 250));
+  window.visualViewport?.addEventListener('resize', onResize);
+  window.visualViewport?.addEventListener('scroll', onResize);
+  engine.resize();
+  if (boot) { boot.dataset.done = '1'; boot.classList.add('hidden'); }
+
+  // headless=new doesn't composite the WebGL canvas into --screenshot, so blit
+  // the rendered frame into a DOM <img> (which IS captured) for the harness.
+  function blitToDOM() {
+    const img = document.createElement('img');
+    img.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
+    img.onload = () => { document.body.dataset.shotReady = '1'; };
+    img.src = engine.renderer.domElement.toDataURL('image/png');
+    document.body.appendChild(img);
+  }
+
+  function stepSim(dt) {
+    draw.update(dt);   // kinematic targets + forces BEFORE the step
+    rotor.update(dt);
+    physics.step(dt);
+    balls.clampSpeeds();
+    balls.sync();
+    if (draw.winner && (draw.state === State.TRANSIT || draw.state === State.DISPLAY)) focus.copy(draw.winner.mesh.position);
+    else focus.set(0, 0, 0);
+  }
+
+  if (params.get('shot')) { runShotHarness(params.get('shot')); return; }
+
+  // ── Normal interactive loop (fixed-step physics, decoupled from FPS) ──
+  const FIXED = 1 / 60;
+  let acc = 0, hudTick = 0;
+  function frame() {
+    const dt = stats.tick();
+    acc += dt;
+    let steps = 0;
+    while (acc >= FIXED && steps < 5) { stepSim(FIXED); acc -= FIXED; steps++; }
+    director.update(dt, draw.state, focus);
+    quality.sample(stats.fps, dt);
+    engine.render();
+    hudTick += dt;
+    if (hudTick > 0.1) { hudTick = 0; hud.setMeters(stats.fps, balls.inDrumCount(), draw.state, draw.mixActivity); }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function runShotHarness(shot) {
+    const dt = 1 / 60;
+
+    // Mixing proof: hold in MIXING and measure real 3D activity + per-axis travel.
+    if (shot === 'mix' || shot === 'metrics') {
+      const sec = parseFloat(params.get('sec') || (shot === 'metrics' ? '15' : '4'));
+      CONFIG.draw.mixSeconds = 1e9; // stay in MIXING for the test
+      draw.start();
+      let i = 0;
+      while (draw.state !== State.MIXING && i < 900) { stepSim(dt); i++; }
+      const p0 = balls.items.map((it) => { const t = it.body.translation(); return { x: t.x, y: t.y, z: t.z }; });
+      const steps = Math.max(1, Math.round(sec / dt));
+      for (let k = 0; k < steps; k++) {
+        stepSim(dt);
+        if (shot === 'metrics' && k % Math.round(3 / dt) === 0) {
+          const m = balls.metrics();
+          console.log(`METRIC t=${(k * dt).toFixed(0)}s moving=${(m.movingRatio * 100).toFixed(0)}% ang=${m.avgAngSpeed.toFixed(1)} coherent=${m.coherent.toFixed(2)} near=${(m.nearWallRatio * 100).toFixed(0)}% top=${(m.topRatio * 100).toFixed(0)}% bot=${(m.bottomRatio * 100).toFixed(0)}%`);
+        }
+      }
+      const D = CONFIG.ball.radius * 2;
+      let mvX = 0, mvY = 0, mvZ = 0, spun = 0;
+      balls.items.forEach((it, idx) => {
+        const t = it.body.translation(), w = it.body.angvel();
+        if (Math.abs(t.x - p0[idx].x) > 3 * D) mvX++;
+        if (Math.abs(t.y - p0[idx].y) > 3 * D) mvY++;
+        if (Math.abs(t.z - p0[idx].z) > 2 * D) mvZ++;
+        if (Math.hypot(w.x, w.y, w.z) > 0.5) spun++;
+      });
+      const n = balls.items.length;
+      const m = balls.metrics();
+      console.log(`MIXTEST sec=${sec} balls=${n} movedX≥3d=${(mvX / n * 100).toFixed(0)}% movedY≥3d=${(mvY / n * 100).toFixed(0)}% movedZ≥2d=${(mvZ / n * 100).toFixed(0)}% spinning=${(spun / n * 100).toFixed(0)}%`);
+      console.log(`METRICS moving=${(m.movingRatio * 100).toFixed(0)}% avgLin=${m.avgLinSpeed.toFixed(2)} avgAng=${m.avgAngSpeed.toFixed(2)} varX=${m.varX.toFixed(2)} varY=${m.varY.toFixed(2)} varZ=${m.varZ.toFixed(2)} nearWall=${(m.nearWallRatio * 100).toFixed(0)}% top=${(m.topRatio * 100).toFixed(0)}% bottom=${(m.bottomRatio * 100).toFixed(0)}% coherent=${m.coherent.toFixed(2)}`);
+      director.update(1, draw.state, focus); director.snap();
+      requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+      return;
+    }
+
+    const autostart = shot !== 'idle';
+    if (autostart) draw.start();
+    const reached = () => {
+      switch (shot) {
+        case 'idle': return draw.state === State.IDLE;
+        case 'mixing': return draw.state === State.MIXING && draw.timer > 1.6;
+        case 'capture': return draw.state === State.CAPTURING && draw.timer > 0.15;
+        case 'tube': return draw.state === State.TRANSIT && draw._u > 0.3 && draw._u < 0.55;
+        case 'chute': return draw.state === State.TRANSIT && draw._u > 0.78;
+        case 'display': return draw.state === State.DISPLAY && Object.values(draw.resultsByPool).some((a) => a.length >= 1);
+        case 'bonus': return draw.state === State.DISPLAY && (draw.resultsByPool.bonus?.length || draw.resultsByPool.stars?.length);
+        case 'complete': return draw.state === State.COMPLETE;
+        default: return true;
+      }
+    };
+    const minSteps = shot === 'idle' ? 90 : 0;
+    for (let i = 0; i < 12000; i++) { stepSim(dt); if (i >= minSteps && reached()) break; }
+    console.log(`SHOT ${shot} state=${draw.state} results=${JSON.stringify(draw.resultsByPool)} inDrum=${balls.inDrumCount()}`);
+    director.update(1, draw.state, focus); director.snap();
+    requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+  }
+}
+
+main().catch((e) => { console.error('STACK ' + (e && e.stack ? e.stack : e)); fail('Demo failed to start — see console.'); });

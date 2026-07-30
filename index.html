@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#090a12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="color-scheme" content="dark">
+<title>Loto Drum — 3D Physics Demo</title>
+<link rel="stylesheet" href="./styles.css">
+
+<!-- Self-hosted dependencies (no CDN, no build step, no changes to the host app).
+     Everything resolves same-origin so it behaves identically in every browser
+     and on GitHub Pages. Rapier's WASM is inlined in vendor/rapier3d-compat.js. -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/jsm/",
+    "@dimforge/rapier3d-compat": "./vendor/rapier3d-compat.js"
+  }
+}
+</script>
+<!-- Safety net: surface a real message if the module graph itself fails to load,
+     so the page can never sit on "Loading…" forever with a silent error. -->
+<script>
+  window.addEventListener('error', function (e) {
+    var b = document.getElementById('boot');
+    if (b && !b.dataset.done) { b.textContent = 'Startup error: ' + (e.message || 'module load failed'); b.className = 'dd-boot error'; }
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var b = document.getElementById('boot');
+    if (b && !b.dataset.done) { b.textContent = 'Startup error: ' + ((e.reason && e.reason.message) || e.reason); b.className = 'dd-boot error'; }
+  });
+</script>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div id="boot" class="dd-boot">
+    <div class="dd-boot-ring"></div>
+    <span>Loading physics &amp; graphics…</span>
+  </div>
+
+  <div id="hud" class="dd-hud"></div>
+
+  <noscript><div class="dd-boot error">This demo requires JavaScript and WebGL2.</div></noscript>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
