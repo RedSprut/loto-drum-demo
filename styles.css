@@ -58,6 +58,15 @@ html, body {
 }
 .dd-meters span[data-warn="1"] { color: #ffb4b4; border-color: rgba(255,120,120,.4); }
 
+.dd-counts {
+  position: absolute; top: calc(46px + var(--safe-t)); left: calc(12px + var(--safe-l));
+  margin: 0; padding: 8px 10px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--stroke);
+  font: 600 11px/1.5 ui-monospace, Menlo, monospace; color: var(--sub);
+  backdrop-filter: blur(10px); white-space: pre; pointer-events: none;
+}
+.dd-counts[data-bad="1"] { color: #ff6b6b; border-color: #ff6b6b; background: rgba(60,10,10,.75); }
+
 .dd-results {
   --chip: 38px;
   position: absolute; top: calc(10px + var(--safe-t)); left: 50%; transform: translateX(-50%);

@@ -119,6 +119,16 @@ export class PhysicsWorld {
     if (body) this.world.removeRigidBody(body);
   }
 
+  /** Toggle all colliders of a body between solid and pass-through (sensor). */
+  setColliderSolid(body, solid) {
+    const n = body.numColliders();
+    for (let i = 0; i < n; i++) {
+      let c = body.collider(i);
+      if (c != null && typeof c.setSensor !== 'function') c = this.world.getCollider(c);
+      c?.setSensor?.(!solid);
+    }
+  }
+
   /** A cuboid box collider (rail dividers / gate door). */
   addBox(hx, hy, hz, pos, quat) {
     const body = this.world.createRigidBody(

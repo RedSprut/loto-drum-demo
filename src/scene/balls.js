@@ -48,22 +48,18 @@ export class Balls {
   constructor(scene, physics, segs = CONFIG.ball.segments) {
     this.scene = scene;
     this.physics = physics;
-    this.items = [];   // {value, poolId, colorSet, body, collider, mesh, drawn, parked}
+    this.items = [];   // {value, poolId, lifecycle, body, collider, mesh, drawn, parked, settledTime}
+    this.poolInfo = new Map();     // poolId -> {initial, min, max}
+    this.removedByPool = new Map(); // poolId -> count disposed after its pool finished
     this.geo = new THREE.SphereGeometry(CONFIG.ball.radius, segs[0], segs[1]);
   }
 
-  /** Numbers to load for a pool: full range, or a random subset if capped. */
+  /** Numbers to load for a pool: EXACTLY the official range min..max (no caps,
+   *  no spares, no duplicates). */
   _numbersFor(pool) {
     const all = [];
     for (let n = pool.min; n <= pool.max; n++) all.push(n);
-    const cap = pool.loadedBallCount;
-    if (!cap || cap >= all.length) return all;
-    // Random distinct subset (winner is still a physical ball from these).
-    for (let i = all.length - 1; i > 0; i--) {
-      const j = Math.floor(secureRandom() * (i + 1));
-      [all[i], all[j]] = [all[j], all[i]];
-    }
-    return all.slice(0, cap).sort((a, b) => a - b);
+    return all;
   }
 
   /** Non-overlapping start positions in the lower/central region of the sphere. */
@@ -91,10 +87,13 @@ export class Balls {
     return out;
   }
 
-  /** (Re)load the balls for `pool`, removing any balls still in the drum. */
+  /** (Re)load the balls for `pool`, removing any balls still in the drum. Creates
+   *  EXACTLY one physical ball per number in the official range. */
   loadPool(pool) {
     this.removeInDrum();
     const numbers = this._numbersFor(pool);
+    this.poolInfo.set(pool.id, { initial: numbers.length, min: pool.min, max: pool.max });
+    if (!this.removedByPool.has(pool.id)) this.removedByPool.set(pool.id, 0);
     const home = this._layout(numbers.length);
     numbers.forEach((value, i) => {
       const color = colorFor(value, pool.colorSet);
@@ -108,8 +107,10 @@ export class Balls {
       const p = home[i];
       const { body, collider } = this.physics.addBall(p.x, p.y, p.z);
       this._kick(body);
-      this.items.push({ value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false, tracker: new BallMotionTracker(body) });
+      this.items.push({ value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false, lifecycle: 'inside-drum', settledTime: 0, tracker: new BallMotionTracker(body) });
     });
+    this._assertUnique(pool.id);
+    this.assertConservation();
   }
 
   _kick(body) {
@@ -119,11 +120,14 @@ export class Balls {
     body.wakeUp();
   }
 
-  /** Dispose every ball still in the drum (keeps parked winners in the rack). */
+  /** Dispose every ball still in the drum (keeps parked winners in the rack).
+   *  Each disposed ball is counted as removed-after-pool so conservation holds. */
   removeInDrum() {
     const keep = [];
     for (const it of this.items) {
       if (it.parked) { keep.push(it); continue; }
+      this.removedByPool.set(it.poolId, (this.removedByPool.get(it.poolId) || 0) + 1);
+      it.lifecycle = 'removed-after-pool';
       this.scene.remove(it.mesh);
       it.mesh.material.dispose();
       this.physics.removeBody(it.body);
@@ -131,7 +135,7 @@ export class Balls {
     this.items = keep;
   }
 
-  /** Dispose EVERYTHING (in-drum and parked) — full reset. */
+  /** Dispose EVERYTHING (in-drum and parked) — full reset of all ledgers. */
   removeAll() {
     for (const it of this.items) {
       this.scene.remove(it.mesh);
@@ -139,11 +143,68 @@ export class Balls {
       this.physics.removeBody(it.body);
     }
     this.items = [];
+    this.poolInfo.clear();
+    this.removedByPool.clear();
+  }
+
+  // ── Conservation / uniqueness invariants ──────────────────────────────────
+
+  /** Per-pool counts by lifecycle (physical pool = the pool a ball was made in). */
+  poolCounts(poolId) {
+    const info = this.poolInfo.get(poolId) || { initial: 0 };
+    let inside = 0, transit = 0, rack = 0;
+    for (const it of this.items) {
+      if (it.poolId !== poolId) continue;
+      if (it.parked) rack++;
+      else if (it.drawn) transit++;
+      else inside++;
+    }
+    const removed = this.removedByPool.get(poolId) || 0;
+    const total = inside + transit + rack + removed;
+    return { poolId, initial: info.initial, inside, transit, rack, removed, total, valid: total === info.initial };
+  }
+
+  allPoolCounts() { return [...this.poolInfo.keys()].map((id) => this.poolCounts(id)); }
+
+  /** Throw if any pool's ball count doesn't balance to its official initial. */
+  assertConservation() {
+    for (const c of this.allPoolCounts()) {
+      if (!c.valid) {
+        throw new Error(`Ball conservation failed for ${c.poolId}: initial=${c.initial}, inside=${c.inside}, transit=${c.transit}, rack=${c.rack}, removed=${c.removed}, total=${c.total}`);
+      }
+    }
+  }
+
+  /** Throw if a freshly loaded pool isn't exactly the unique set min..max. */
+  _assertUnique(poolId) {
+    const info = this.poolInfo.get(poolId);
+    const nums = this.items.filter((it) => it.poolId === poolId).map((it) => it.value);
+    const uniq = new Set(nums);
+    if (uniq.size !== nums.length) throw new Error(`Duplicate ball numbers in pool ${poolId}`);
+    const expected = info.max - info.min + 1;
+    if (nums.length !== expected) throw new Error(`Pool ${poolId} has ${nums.length} balls, expected ${expected}`);
+    for (let n = info.min; n <= info.max; n++) if (!uniq.has(n)) throw new Error(`Pool ${poolId} missing number ${n}`);
+  }
+
+  /** {unique, duplicates, missing} for a pool's currently-loaded physical set. */
+  uniquenessReport(poolId) {
+    const info = this.poolInfo.get(poolId) || { min: 1, max: 0 };
+    const nums = this.items.filter((it) => it.poolId === poolId).map((it) => it.value);
+    const uniq = new Set(nums);
+    let missing = 0;
+    for (let n = info.min; n <= info.max; n++) if (!uniq.has(n)) missing++;
+    return { unique: uniq.size, duplicates: nums.length - uniq.size, missing };
   }
 
   /** Wake all in-play balls (called during MIXING so nothing dozes off). */
   keepAwake() {
     for (const it of this.items) if (!it.parked && it.body.isSleeping()) it.body.wakeUp();
+  }
+
+  /** Unconditionally wake every in-drum ball (used during shutdown so nothing
+   *  can doze off mid-air on a wall facet). */
+  wakeActive() {
+    for (const it of this.items) if (!it.drawn && !it.parked) it.body.wakeUp();
   }
 
   /** In-play items (not drawn, not parked). */
@@ -216,6 +277,17 @@ export class Balls {
     };
   }
 
+  /** Clear accumulated forces/torques so only the CURRENT frame's forces apply
+   *  (Rapier keeps addForce persistent until reset — otherwise stale mixing forces
+   *  would keep pushing balls up after the mixer stops). */
+  resetForces() {
+    for (const it of this.items) {
+      if (it.parked) continue;
+      it.body.resetForces?.(false);
+      it.body.resetTorques?.(false);
+    }
+  }
+
   /** Keep ball speeds sane so nothing tunnels the wall. */
   clampSpeeds() {
     const { maxLinSpeed, maxAngSpeed } = CONFIG.ball;
@@ -226,6 +298,83 @@ export class Balls {
       const w = it.body.angvel(); const a = Math.hypot(w.x, w.y, w.z);
       if (a > maxAngSpeed) { const k = maxAngSpeed / a; it.body.setAngvel({ x: w.x * k, y: w.y * k, z: w.z * k }, true); }
     }
+  }
+
+  // ── Final settling (all artificial forces off; only gravity) ──────────────
+
+  /** Guarantee every remaining in-drum ball is a normal dynamic body under full
+   *  gravity with free translation/rotation (no leftover kinematic/frozen state). */
+  restoreDynamic() {
+    const { RAPIER } = this.physics;
+    for (const it of this.items) {
+      if (it.parked) continue;
+      const b = it.body;
+      if (b.bodyType() !== RAPIER.RigidBodyType.Dynamic) b.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+      b.setGravityScale?.(1.0, true);
+      b.setEnabledTranslations?.(true, true, true, true);
+      b.setEnabledRotations?.(true, true, true, true);
+      // Make balls behave like heavy sand so they roll down and rest at the
+      // bottom instead of bouncing/wedging on the faceted wall. (Still only
+      // gravity + friction + damping — no artificial forces.)
+      b.setLinearDamping?.(CONFIG.settle.damping);
+      b.setAngularDamping?.(CONFIG.settle.damping);
+      it.collider?.setRestitution?.(CONFIG.settle.restitution);
+      it.collider?.setFriction?.(CONFIG.settle.friction);
+      b.wakeUp();
+      it.settledTime = 0;
+    }
+  }
+
+  /** Smooth analytic spherical wall as a penalty force (spring + damping on the
+   *  outward velocity). It engages a hair inside the faceted trimesh so balls ride
+   *  a perfect sphere and never catch on a facet crease — applied every step, for
+   *  mixing and settling alike. Uniform for all balls; it is the drum wall. */
+  applyWall() {
+    const maxR = CONFIG.drum.radius - CONFIG.ball.radius - CONFIG.wall.margin;
+    const throatR = CONFIG.drum.throatRadius + CONFIG.ball.radius * 0.5;
+    const throatY = -CONFIG.drum.radius * 0.6;
+    const { k, damp } = CONFIG.wall;
+    for (const it of this.items) {
+      if (it.drawn || it.parked) continue;
+      const p = it.body.translation();
+      // Leave the bottom-centre throat open so a ball can drop through to capture.
+      if (p.y < throatY && Math.hypot(p.x, p.z) < throatR) continue;
+      const r = Math.hypot(p.x, p.y, p.z);
+      if (r <= maxR || r < 1e-4) continue;
+      const nx = p.x / r, ny = p.y / r, nz = p.z / r;
+      const v = it.body.linvel();
+      const vn = v.x * nx + v.y * ny + v.z * nz;      // outward radial speed
+      const f = -(k * (r - maxR) + damp * Math.max(0, vn)); // inward
+      it.body.addForce({ x: nx * f, y: ny * f, z: nz * f }, true);
+    }
+  }
+
+  /** Accumulate per-ball "at rest" time (used to detect full settling). */
+  updateSettling(dt) {
+    const S = CONFIG.settle;
+    for (const it of this.items) {
+      if (it.drawn || it.parked) continue;
+      const v = it.body.linvel(), w = it.body.angvel();
+      const lin = Math.hypot(v.x, v.y, v.z), ang = Math.hypot(w.x, w.y, w.z);
+      it.settledTime = (lin < S.linThresh && ang < S.angThresh) ? (it.settledTime || 0) + dt : 0;
+    }
+  }
+
+  /** {allSettled, suspended, maxY} for the remaining in-drum balls. `suspended`
+   *  = balls resting above the bottom region (must be 0 in the final frame). */
+  settleStatus() {
+    const S = CONFIG.settle;
+    const suspendY = CONFIG.drum.radius * S.suspendYFrac;
+    let all = true, suspended = 0, maxY = -Infinity, n = 0;
+    for (const it of this.items) {
+      if (it.drawn || it.parked) continue;
+      n++;
+      const p = it.body.translation();
+      maxY = Math.max(maxY, p.y);
+      if ((it.settledTime || 0) < S.hold) all = false;
+      if (p.y > suspendY) suspended++;
+    }
+    return { allSettled: n === 0 ? true : all, suspended, maxY: n === 0 ? 0 : maxY, count: n };
   }
 
   sync() {

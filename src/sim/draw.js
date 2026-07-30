@@ -19,7 +19,7 @@ import { poolsOf, drawQueueOf } from '../games.js';
 export const State = Object.freeze({
   IDLE: 'idle', STARTUP: 'startup', MIXING: 'mixing', ARMING: 'arming',
   CAPTURING: 'capturing', TRANSIT: 'transit', DISPLAY: 'display', RELOAD: 'reload',
-  STOPPING: 'stopping', COMPLETE: 'complete',
+  STOPPING: 'stopping', FINAL_SETTLING: 'final-settling', COMPLETE: 'complete',
 });
 
 const TRANSIT_SECONDS = 2.2;
@@ -60,7 +60,7 @@ export class DrawController {
     this.groupIndex = 0; this.idxInGroup = 0;
     this.resultsByPool = {};
     for (const id of Object.keys(this.pools)) this.resultsByPool[id] = [];
-    this.winner = null; this.rotor.reset(); this.rotor.setSpeed(CONFIG.rotor.speedIdle);
+    this.winner = null; this.rotor.reset(); this.rotor.setSolid(true); this.drum.setWallSolid(true); this.rotor.setSpeed(CONFIG.rotor.speedIdle);
     this.drum.closeGate();
     this._set(State.IDLE);
   }
@@ -76,7 +76,7 @@ export class DrawController {
     for (const id of Object.keys(this.pools)) this.resultsByPool[id] = [];
     this._lastWinnerValue = null;
     this._phaseIdx = 0; this._phaseTimer = 0; this._warned = false;
-    this.rotor.reset(); this._applyPhase(); // start the mixer immediately
+    this.rotor.reset(); this.rotor.setSolid(true); this.drum.setWallSolid(true); this._applyPhase(); // start the mixer immediately
     this.drum.closeGate();
     this._set(State.STARTUP);
   }
@@ -121,8 +121,29 @@ export class DrawController {
         if (this.timer > CONFIG.draw.reloadSeconds) this._set(State.MIXING);
         break;
       case State.STOPPING:
-        this.rotor.setSpeed(0, 0); // only NOW does the rotor wind down
-        if (this.timer > CONFIG.draw.stoppingSeconds) { this._set(State.COMPLETE); this.hooks.onDone?.(this.resultsByPool); }
+        // Rotor coasts to a stop (sweeping balls off its arms). NO mixer, NO air,
+        // NO anti-stall/suction — every artificial force is already off here.
+        this.rotor.setSpeed(0, 0);
+        this.balls.wakeActive();
+        if (this.timer > CONFIG.draw.stoppingSeconds) {
+          this.balls.restoreDynamic(); // remaining balls: dynamic, full gravity, free
+          this._set(State.FINAL_SETTLING);
+        }
+        break;
+      case State.FINAL_SETTLING:
+        // Only gravity + collisions now. End when every remaining ball is at rest
+        // in the bottom of the sphere (physical condition), with a safety cap.
+        this.rotor.setSpeed(0, 0);
+        this.balls.wakeActive();      // never let a ball doze off mid-air
+        this.balls.updateSettling(dt);
+        {
+          const st = this.balls.settleStatus();
+          // Done once nothing is suspended and the bed is calm (or the safety cap).
+          if ((st.suspended === 0 && this.timer > 2.0) || st.allSettled || this.timer > CONFIG.settle.maxSeconds) {
+            this.balls.assertConservation();
+            this._set(State.COMPLETE);
+          }
+        }
         break;
       default: break;
     }
@@ -175,6 +196,7 @@ export class DrawController {
     if (!winner) return;
     const { RAPIER } = this.balls.physics;
     winner.drawn = true;
+    winner.lifecycle = 'in-transit'; // SAME physical entity — never cloned/replaced
     const poolId = this.currentPoolId;
     this.resultsByPool[poolId].push(winner.value);
     this._lastWinnerValue = winner.value;
@@ -187,6 +209,7 @@ export class DrawController {
     this._path = this.exit.buildPath(this._tmp, this.groupIndex, this.idxInGroup);
     this._u = 0;
 
+    this.balls.assertConservation();
     this.hooks.onDraw?.(winner.value, poolId, this.resultsByPool);
     this._set(State.TRANSIT);
   }
@@ -198,6 +221,8 @@ export class DrawController {
     if (this._u >= 1) {
       this.winner.mesh.position.copy(p);  // freeze the mesh exactly in its slot
       this.winner.parked = true;          // number now turns to face the camera (mesh only)
+      this.winner.lifecycle = 'in-rack';
+      this.balls.assertConservation();
       this._set(State.DISPLAY);
     }
   }
@@ -210,7 +235,12 @@ export class DrawController {
       this.idxInGroup = 0;
     }
     if (this.groupIndex >= this.queue.length) {
-      // Last required ball has settled — only now begin winding the rotor down.
+      // Last required ball has settled + faced the camera → sort the UI result,
+      // THEN begin winding the mechanism down (STOPPING → FINAL_SETTLING). The
+      // rotor becomes pass-through so remaining balls fall to the bottom.
+      this.balls.assertConservation();
+      this.hooks.onDone?.(this.resultsByPool);
+      this.rotor.setSolid(false);
       this._set(State.STOPPING);
       return;
     }
@@ -219,6 +249,7 @@ export class DrawController {
     const nextPool = this.pools[this.currentPoolId];
     if (this.idxInGroup === 0 && nextPool && nextPool.strategy === 'separate-pool') {
       this.balls.loadPool(nextPool); // keeps parked winners, swaps the in-drum set
+      this.balls.assertConservation();
       this._set(State.RELOAD);
     } else {
       this._set(State.MIXING);

@@ -13,6 +13,14 @@ const M = (min, max, drawCount) => ({ id: 'main', min, max, drawCount, colorSet:
 const group = (pool, label, slotCount) => ({ pool, label, slotCount });
 
 export const GAME_PROFILES = {
+  lotto36: {
+    id: 'lotto36', label: 'Lotto 6/36 (тест)',
+    mainPool: M(1, 36, 6),
+    bonusPools: [],
+    drawOrder: ['main'],
+    resultLayout: { groups: [group('main', 'Основные', 6)] },
+  },
+
   eurojackpot: {
     id: 'eurojackpot', label: 'Eurojackpot (5/50 + 2/12)',
     mainPool: M(1, 50, 5),

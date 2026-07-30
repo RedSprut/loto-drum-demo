@@ -72,8 +72,22 @@ export class HUD {
       this.stateEl = document.createElement('span');
       this.actEl = document.createElement('span');
       this.meters.append(this.fpsEl, this.physEl, this.stateEl, this.actEl);
-      this.root.append(this.meters);
+      this.counts = document.createElement('pre');
+      this.counts.className = 'dd-counts';
+      this.root.append(this.meters, this.counts);
     }
+  }
+
+  /** Per-pool ball-conservation counter (debug only). Turns red if math breaks. */
+  setCounts(poolCounts) {
+    if (!this.debug || !this.counts) return;
+    let bad = false;
+    const lines = poolCounts.map((c) => {
+      if (!c.valid) bad = true;
+      return `${c.poolId.toUpperCase()}: initial ${c.initial}  inside ${c.inside}  transit ${c.transit}  rack ${c.rack}  removed ${c.removed}  total ${c.total}  valid ${c.valid ? 'yes' : 'NO'}`;
+    });
+    this.counts.textContent = lines.join('\n');
+    this.counts.dataset.bad = bad ? '1' : '0';
   }
 
   /** Rebuild the results row for a profile: main group on its own single line,
@@ -157,7 +171,8 @@ export class HUD {
       case State.CAPTURING: b.textContent = 'Выбор шара…'; b.disabled = true; break;
       case State.TRANSIT:
       case State.DISPLAY:
-      case State.STOPPING: b.textContent = winner != null ? `Шар №${winner}` : 'Выбор шара…'; b.disabled = true; break;
+      case State.STOPPING:
+      case State.FINAL_SETTLING: b.textContent = winner != null ? `Шар №${winner}` : 'Выбор шара…'; b.disabled = true; break;
       case State.COMPLETE: b.textContent = 'Новый розыгрыш'; b.disabled = false; break;
       default: break;
     }

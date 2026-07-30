@@ -97,7 +97,9 @@ async function main() {
   }
 
   function stepSim(dt) {
-    draw.update(dt);   // kinematic targets + forces BEFORE the step
+    balls.resetForces(); // clear last frame's forces so stale mixing forces can't linger
+    draw.update(dt);     // kinematic targets + forces BEFORE the step
+    balls.applyWall();   // smooth analytic drum wall (all states)
     rotor.update(dt);
     physics.step(dt);
     balls.clampSpeeds();
@@ -122,7 +124,7 @@ async function main() {
     quality.sample(stats.fps, dt);
     engine.render();
     hudTick += dt;
-    if (hudTick > 0.1) { hudTick = 0; hud.setMeters(stats.fps, balls.inDrumCount(), draw.state, draw.mixActivity); }
+    if (hudTick > 0.1) { hudTick = 0; hud.setMeters(stats.fps, balls.inDrumCount(), draw.state, draw.mixActivity); hud.setCounts(balls.allPoolCounts()); }
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
@@ -159,6 +161,33 @@ async function main() {
       const m = balls.metrics();
       console.log(`MIXTEST sec=${sec} balls=${n} movedX≥3d=${(mvX / n * 100).toFixed(0)}% movedY≥3d=${(mvY / n * 100).toFixed(0)}% movedZ≥2d=${(mvZ / n * 100).toFixed(0)}% spinning=${(spun / n * 100).toFixed(0)}%`);
       console.log(`METRICS moving=${(m.movingRatio * 100).toFixed(0)}% avgLin=${m.avgLinSpeed.toFixed(2)} avgAng=${m.avgAngSpeed.toFixed(2)} varX=${m.varX.toFixed(2)} varY=${m.varY.toFixed(2)} varZ=${m.varZ.toFixed(2)} nearWall=${(m.nearWallRatio * 100).toFixed(0)}% top=${(m.topRatio * 100).toFixed(0)}% bottom=${(m.bottomRatio * 100).toFixed(0)}% coherent=${m.coherent.toFixed(2)}`);
+      director.update(1, draw.state, focus); director.snap();
+      requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+      return;
+    }
+
+    // Full-draw ball-count audit: logs the count trace + uniqueness + suspended.
+    if (shot === 'counttest') {
+      draw.start();
+      let lastRack = -1;
+      for (let i = 0; i < 30000; i++) {
+        stepSim(dt);
+        balls.updateFacing(dt, engine.camera);
+        const rack = balls.items.filter((it) => it.parked).length;
+        if (rack !== lastRack) {
+          lastRack = rack;
+          const cs = balls.allPoolCounts().map((c) => `${c.poolId}[in=${c.inside},tr=${c.transit},rack=${c.rack},rm=${c.removed},tot=${c.total},ok=${c.valid}]`).join(' ');
+          console.log(`COUNT rack=${rack} state=${draw.state} ${cs}`);
+        }
+        if (draw.state === State.COMPLETE) break;
+      }
+      for (const c of balls.allPoolCounts()) {
+        const u = balls.uniquenessReport(c.poolId);
+        console.log(`FINAL ${c.poolId}: initial=${c.initial} inside=${c.inside} transit=${c.transit} rack=${c.rack} removed=${c.removed} total=${c.total} valid=${c.valid} unique=${u.unique} duplicates=${u.duplicates} missing=${u.missing}`);
+      }
+      const ss = balls.settleStatus();
+      console.log(`SUSPENDED ballsSuspendedAboveBottom=${ss.suspended} maxY=${ss.maxY.toFixed(2)} allSettled=${ss.allSettled} results=${JSON.stringify(draw.resultsByPool)}`);
+      balls.snapFacing(engine.camera); hud.sortResults(false);
       director.update(1, draw.state, focus); director.snap();
       requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
       return;
@@ -211,7 +240,7 @@ async function main() {
       }
       if (i >= minSteps && reached()) break;
     }
-    if (track) console.log(`DRAWTEST maxStill=${mStill.toFixed(2)}s maxTop=${mTop.toFixed(2)}s maxBottom=${mBot.toFixed(2)}s maxWall=${mWall.toFixed(2)}s rotorMinDuringDraw=${(rotorMin === 1e9 ? 0 : rotorMin).toFixed(2)}rad/s`);
+    if (track) { const ss = balls.settleStatus(); console.log(`DRAWTEST maxStill=${mStill.toFixed(2)}s maxTop=${mTop.toFixed(2)}s maxBottom=${mBot.toFixed(2)}s maxWall=${mWall.toFixed(2)}s rotorMinDuringDraw=${(rotorMin === 1e9 ? 0 : rotorMin).toFixed(2)}rad/s suspended=${ss.suspended} maxY=${ss.maxY.toFixed(2)}`); }
     console.log(`SHOT ${shot} state=${draw.state} results=${JSON.stringify(draw.resultsByPool)} inDrum=${balls.inDrumCount()}`);
     balls.snapFacing(engine.camera);
     if (track) hud.sortResults(); // show the final sorted result in the stills

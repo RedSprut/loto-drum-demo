@@ -43,10 +43,11 @@ export class Rotor {
     const soft = this._pusherMat();
 
     // ── Primary rotor ──
+    this.colliders = []; // captured so we can make them pass-through at settling
     this.bodyP = this.physics.createKinematic({ x: 0, y: 0, z: 0 });
     this.groupP = new THREE.Group();
     const toX = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2);
-    this.physics.attachCylinder(this.bodyP, shaftHalf, Rr.shaftRadius, { x: 0, y: 0, z: 0 }, toX, { friction: 0.18 });
+    this.colliders.push(this.physics.attachCylinder(this.bodyP, shaftHalf, Rr.shaftRadius, { x: 0, y: 0, z: 0 }, toX, { friction: 0.18 }));
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(Rr.shaftRadius, Rr.shaftRadius, shaftHalf * 2, 20), silver);
     shaft.rotation.z = Math.PI / 2;
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(Rr.hubRadius, Rr.hubRadius, ballR * 1.5, 24), silver);
@@ -71,7 +72,7 @@ export class Rotor {
       const c = Math.cos(angle), s = Math.sin(angle);
       const dir = new THREE.Vector3(0, c, s);
       const qArm = new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle);
-      this.physics.attachCylinder(this.bodyP, armLen / 2, Rr.armRadius, { x: xk, y: armMid * c, z: armMid * s }, qArm, { friction: 0.18 });
+      this.colliders.push(this.physics.attachCylinder(this.bodyP, armLen / 2, Rr.armRadius, { x: xk, y: armMid * c, z: armMid * s }, qArm, { friction: 0.18 }));
       const arm = new THREE.Mesh(armGeo, silver);
       arm.scale.set(1, armLen, 1); arm.position.set(xk, armMid * c, armMid * s); arm.quaternion.copy(qArm);
 
@@ -79,7 +80,7 @@ export class Rotor {
       const qPush = new THREE.Quaternion().setFromAxisAngle(dir, tilt)
         .multiply(new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle + Math.PI / 2));
       const pp = { x: xk, y: armOuter * c, z: armOuter * s };
-      this.physics.attachCapsule(this.bodyP, Rr.pusherHalf, Rr.pusherRadius, pp, qPush, { friction: 0.22, restitution: 0.5 });
+      this.colliders.push(this.physics.attachCapsule(this.bodyP, Rr.pusherHalf, Rr.pusherRadius, pp, qPush, { friction: 0.22, restitution: 0.5 }));
       const pusher = new THREE.Mesh(pusherGeo, soft);
       pusher.position.set(pp.x, pp.y, pp.z); pusher.quaternion.copy(qPush);
       this.groupP.add(arm, pusher);
@@ -107,14 +108,14 @@ export class Rotor {
       const localArmQ = new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle);
       const qArm = this._secBase.clone().multiply(localArmQ);
       const localArmPos = new THREE.Vector3(0, armMid * c, armMid * s).applyQuaternion(this._secBase);
-      this.physics.attachCylinder(this.bodyS, armLen / 2, S.armRadius, { x: localArmPos.x, y: localArmPos.y, z: localArmPos.z }, qArm, { friction: 0.18 });
+      this.colliders.push(this.physics.attachCylinder(this.bodyS, armLen / 2, S.armRadius, { x: localArmPos.x, y: localArmPos.y, z: localArmPos.z }, qArm, { friction: 0.18 }));
       const arm = new THREE.Mesh(secArmGeo, silver);
       arm.scale.set(1, armLen, 1); arm.position.copy(localArmPos); arm.quaternion.copy(qArm);
 
       const localPushQ = new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle + Math.PI / 2);
       const qPush = this._secBase.clone().multiply(localPushQ);
       const localPushPos = new THREE.Vector3(0, secOuter * c, secOuter * s).applyQuaternion(this._secBase);
-      this.physics.attachCapsule(this.bodyS, S.pusherHalf, S.pusherRadius, { x: localPushPos.x, y: localPushPos.y, z: localPushPos.z }, qPush, { friction: 0.22, restitution: 0.5 });
+      this.colliders.push(this.physics.attachCapsule(this.bodyS, S.pusherHalf, S.pusherRadius, { x: localPushPos.x, y: localPushPos.y, z: localPushPos.z }, qPush, { friction: 0.22, restitution: 0.5 }));
       const pusher = new THREE.Mesh(secPushGeo, this._pusherMat());
       pusher.position.copy(localPushPos); pusher.quaternion.copy(qPush);
       this.groupS.add(arm, pusher);
@@ -124,6 +125,12 @@ export class Rotor {
 
   /** @param {number} primary rad/s  @param {number} secondary rad/s */
   setSpeed(primary, secondary = 0) { this.targetPrimary = primary; this.targetSecondary = secondary; }
+
+  /** Make the rotor's colliders solid (mixing) or pass-through (final settling,
+   *  so balls fall past the shaft/arms to the bottom instead of piling on them). */
+  setSolid(solid) {
+    for (const c of this.colliders) c?.setSensor?.(!solid);
+  }
 
   reset() {
     this.anglePrimary = 0; this.angleSecondary = 0;

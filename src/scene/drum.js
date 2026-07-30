@@ -39,8 +39,8 @@ function sphereShell(radius, latRings, lonSegs, holeAngle) {
       const b = a + 1;
       const c = a + stride;
       const d = c + 1;
-      // Wind so normals face inward (balls live inside).
-      idx.push(a, b, c, b, d, c);
+      // Wind so triangle normals face inward (balls live inside the shell).
+      idx.push(a, c, b, b, c, d);
     }
   }
   return { vertices: new Float32Array(verts), indices: new Uint32Array(idx) };
@@ -154,11 +154,17 @@ export class Drum {
     const { vertices, indices } = sphereShell(R, D.latRings, D.lonSegs, holeAngle);
     const wall = this.physics.addTrimesh(vertices, indices, { friction: 0.35, restitution: 0.28 });
     this.wallBody = wall.body;
+    this._wallCollider = wall.collider;
 
     // Gate plug closed by default.
     this._gate = null;
     this.closeGate();
   }
+
+  /** Make the faceted trimesh wall solid (mixing) or pass-through (final settling,
+   *  where the smooth analytic boundary in Balls.containSphere takes over so balls
+   *  can't catch on a facet normal). */
+  setWallSolid(solid) { this._wallCollider?.setSensor?.(!solid); }
 
   openGate() {
     if (this.gateOpen) return;

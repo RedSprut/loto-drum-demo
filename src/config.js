@@ -15,7 +15,26 @@ export const CONFIG = {
     captureTimeout: 5.0,  // escalate the throat suction if nobody has dropped yet
     displaySeconds: 1.4,  // brief hold on the winner — the rest keep mixing
     reloadSeconds: 1.6,   // separate bonus pool swap (rotor keeps spinning)
-    stoppingSeconds: 1.3, // rotor winds down AFTER the last ball has settled
+    stoppingSeconds: 3.0, // rotor coasts down (sweeping balls off) before final settling
+  },
+
+  // FINAL_SETTLING: with every artificial force off, wait until all remaining
+  // balls are at rest in the bottom of the sphere (physical condition, not timer).
+  settle: {
+    linThresh: 0.15,      // m/s below which a ball counts as "still"
+    angThresh: 0.3,       // rad/s
+    hold: 0.5,            // seconds a ball must stay still to be "settled"
+    suspendYFrac: 0.15,   // above y = R·this after settling = genuinely floating (a resting pile stays below)
+    // During settling, make balls behave like heavy sand: almost no bounce (kills
+    // trimesh trampolining), a little more grip, moderate damping — so they roll
+    // down and rest at the bottom. Still only gravity + friction + damping.
+    // Smooth analytic wall (containSphere) takes over here, so we can use real
+    // damping/friction to bleed off energy: balls spiral down and rest at the
+    // bottom instead of orbiting the sphere forever.
+    restitution: 0.1,
+    friction: 0.35,
+    damping: 2.4,
+    maxSeconds: 15,       // safety cap so the state can never hang forever
   },
 
   ball: {
@@ -40,8 +59,8 @@ export const CONFIG = {
     radius: 3.0,
     glassOuter: 3.14,
     visSegments: 64,
-    latRings: 20,
-    lonSegs: 32,
+    latRings: 36,         // finer physics tessellation so balls don't wedge in facet creases
+    lonSegs: 54,
     throatRadius: 0.34,
     gateY: -2.86,
     equatorScaleX: 1.06,
@@ -151,6 +170,11 @@ export const CONFIG = {
     subSteps: 2,
     maxDt: 1 / 45,
   },
+
+  // Smooth analytic spherical wall (penalty force). It engages a hair before the
+  // faceted trimesh, so balls glide on a perfect sphere and never catch on a
+  // facet crease — the real drum boundary, robust for both mixing and settling.
+  wall: { k: 600, damp: 24, margin: 0.06 },
 
   // Near-static frontal camera. No orbiting, no side views — only a tiny zoom and
   // a downward target dip while a ball exits.
