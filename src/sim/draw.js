@@ -19,7 +19,8 @@ import { poolsOf, drawQueueOf } from '../games.js';
 
 export const State = Object.freeze({
   IDLE: 'idle', STARTUP: 'startup', MIXING: 'mixing', ARMING: 'arming',
-  CAPTURING: 'capturing', TRANSIT: 'transit', DISPLAY: 'display', RELOAD: 'reload', COMPLETE: 'complete',
+  CAPTURING: 'capturing', TRANSIT: 'transit', DISPLAY: 'display', RELOAD: 'reload',
+  STOPPING: 'stopping', COMPLETE: 'complete',
 });
 
 const TRANSIT_SECONDS = 2.2;
@@ -75,43 +76,54 @@ export class DrawController {
     this.groupIndex = 0; this.idxInGroup = 0;
     for (const id of Object.keys(this.pools)) this.resultsByPool[id] = [];
     this._lastWinnerValue = null;
-    this.rotor.reset(); this.rotor.setSpeed(CONFIG.rotor.speedStartup);
+    this._phaseIdx = 0; this._phaseTimer = 0; this._warned = false;
+    this.rotor.reset(); this._applyPhase(); // start the mixer immediately
     this.drum.closeGate();
     this._set(State.STARTUP);
   }
 
   reset() { this.loadProfile(this.profile); }
 
+  /** The mixer (rotor phases + air field) — runs CONTINUOUSLY through every state
+   *  of an active draw so the bed never goes calm between picks. */
+  _driveMixer(dt, liftScale = 1) {
+    this.balls.keepAwake();
+    this._runMixPhases(dt);
+    this.air.apply(this.balls.activeItems(), dt, liftScale);
+    this._trackActivity(dt);
+  }
+
   update(dt) {
     this.timer += dt;
-    const st = this.state;
-    if (st === State.STARTUP || st === State.MIXING || st === State.ARMING || st === State.CAPTURING) this.balls.keepAwake();
-
     switch (this.state) {
       case State.STARTUP:
-        this.air.apply(this._activeBodies(), dt);
-        if (this.timer > CONFIG.draw.startupSeconds) { this._phaseIdx = 0; this._phaseTimer = 0; this._applyPhase(); this._set(State.MIXING); }
+        this._driveMixer(dt);
+        if (this.timer > CONFIG.draw.startupSeconds) this._set(State.MIXING);
         break;
       case State.MIXING:
-        this._runMixPhases(dt);
-        this.air.apply(this._activeBodies(), dt);
-        this._trackActivity(dt);
-        if (this.timer > CONFIG.draw.mixSeconds) { this.rotor.setSpeed(CONFIG.rotor.speedArm, 0); this._set(State.ARMING); }
-        break;
-      case State.ARMING:
-        if (this.timer > CONFIG.draw.armSeconds) { this.drum.openGate(); this.rotor.setSpeed(CONFIG.rotor.speedCapture); this._set(State.CAPTURING); }
+        this._driveMixer(dt);
+        if (this.timer > CONFIG.draw.mixSeconds) { this.drum.openGate(); this._set(State.CAPTURING); }
         break;
       case State.CAPTURING:
-        this._watchCapture(dt);
+        this._driveMixer(dt, CONFIG.air.captureLiftScale); // keep mixing, just ease the updraft
+        this._captureDrain();
+        this._watchCapture();
         break;
       case State.TRANSIT:
+        this._driveMixer(dt);       // the REST keep mixing while the winner travels
         this._advanceTransit(dt);
         break;
       case State.DISPLAY:
+        this._driveMixer(dt);       // still mixing — no calm pause between picks
         if (this.timer > CONFIG.draw.displaySeconds) this._afterDisplay();
         break;
       case State.RELOAD:
-        if (this.timer > CONFIG.draw.reloadSeconds) { this._applyPhase(); this._set(State.MIXING); }
+        this._driveMixer(dt);
+        if (this.timer > CONFIG.draw.reloadSeconds) this._set(State.MIXING);
+        break;
+      case State.STOPPING:
+        this.rotor.setSpeed(0, 0); // only NOW does the rotor wind down
+        if (this.timer > CONFIG.draw.stoppingSeconds) { this._set(State.COMPLETE); this.hooks.onDone?.(this.resultsByPool); }
         break;
       default: break;
     }
@@ -119,10 +131,8 @@ export class DrawController {
 
   _trackActivity(dt) {
     this.mixActivity = this.balls.activity();
-    // Denser pools (69–90 balls) naturally move slower, so only flag a genuine
-    // stall. Diagnostic only — it never alters the draw.
     if (this.mixActivity < 0.3) this.stalledFor += dt; else this.stalledFor = 0;
-    if (this.stalledFor > 2.0 && !this._warned) {
+    if (this.stalledFor > 2.5 && !this._warned) {
       this._warned = true;
       console.warn(`Low mixing activity (${(this.mixActivity * 100).toFixed(0)}%) — dense pool or dead zone`);
     }
@@ -144,30 +154,26 @@ export class DrawController {
     }
   }
 
-  _activeBodies() {
-    const out = [];
-    for (const it of this.balls.items) if (!it.drawn && !it.parked) out.push(it.body);
-    return out;
+  /** Localized suction at the bottom-centre drain — pulls a passing ball out
+   *  while the rest of the sphere keeps mixing. Uniform, never by number. */
+  _captureDrain() {
+    const C = CONFIG.capture;
+    const boost = this.timer > CONFIG.draw.captureTimeout ? C.escalate : 1;
+    for (const it of this.balls.activeItems()) {
+      const p = it.body.translation();
+      if (p.y < C.drainY && Math.hypot(p.x, p.z) < C.drainR) {
+        it.body.addForce({ x: -p.x * C.inward * boost, y: -C.down * boost, z: -p.z * C.inward * boost }, true);
+      }
+    }
   }
 
-  _watchCapture(dt) {
+  _watchCapture() {
     let winner = null, lowest = this.exit.captureY;
     for (const it of this.balls.active()) {
       const y = it.body.translation().y;
       if (y < lowest) { lowest = y; winner = it; }
     }
-    if (!winner) {
-      // Gentle uniform funnel toward the throat (all balls equally), escalating
-      // if nobody has dropped yet. Never targets a specific ball.
-      const C = CONFIG.capture;
-      const boost = this.timer > CONFIG.draw.captureTimeout ? C.escalate : 1;
-      for (const it of this.balls.active()) {
-        const p = it.body.translation();
-        it.body.addForce({ x: -p.x * C.center * boost, y: -C.down * boost, z: -p.z * C.center * boost }, true);
-      }
-      return;
-    }
-    void dt;
+    if (!winner) return;
     const { RAPIER } = this.balls.physics;
     winner.drawn = true;
     const poolId = this.currentPoolId;
@@ -175,7 +181,6 @@ export class DrawController {
     this._lastWinnerValue = winner.value;
     this.winner = winner;
     this.drum.closeGate();
-    this._applyPhase();
 
     winner.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
     const s = winner.body.translation();
@@ -206,20 +211,17 @@ export class DrawController {
       this.idxInGroup = 0;
     }
     if (this.groupIndex >= this.queue.length) {
-      this.rotor.setSpeed(CONFIG.rotor.speedIdle);
-      this._set(State.COMPLETE);
-      this.hooks.onDone?.(this.resultsByPool);
+      // Last required ball has settled — only now begin winding the rotor down.
+      this._set(State.STOPPING);
       return;
     }
-    // Continuing: does the next group need a separate pool loaded?
+    // Continuing: does the next group need a separate pool loaded? The rotor keeps
+    // spinning across the reload (no calm gap).
     const nextPool = this.pools[this.currentPoolId];
     if (this.idxInGroup === 0 && nextPool && nextPool.strategy === 'separate-pool') {
       this.balls.loadPool(nextPool); // keeps parked winners, swaps the in-drum set
-      this.rotor.reset();
-      this.rotor.setSpeed(CONFIG.rotor.speedStartup);
       this._set(State.RELOAD);
     } else {
-      this._applyPhase();
       this._set(State.MIXING);
     }
   }

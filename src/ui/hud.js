@@ -59,6 +59,11 @@ export class HUD {
 
     this.root.append(this.results, this.startBtn, this.setBtn, this.panel);
 
+    // Keep the result chips fitting one line as the viewport changes.
+    const onResize = () => this._sizeChips();
+    window.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+
     if (this.debug) {
       this.meters = document.createElement('div');
       this.meters.className = 'dd-meters';
@@ -71,18 +76,15 @@ export class HUD {
     }
   }
 
-  /** Rebuild the results row for a profile (one labelled group per pool). */
+  /** Rebuild the results row for a profile: main group on its own single line,
+   *  each bonus group stacked BELOW on its own line (hidden until it has balls). */
   buildLayout(profile) {
     this.results.innerHTML = '';
     this.groups = {};
+    this.mainCount = profile.resultLayout.groups[0]?.slotCount || 6;
     profile.resultLayout.groups.forEach((g, i) => {
-      if (i > 0) {
-        const sep = document.createElement('div');
-        sep.className = 'dd-result-sep';
-        this.results.appendChild(sep);
-      }
       const wrap = document.createElement('div');
-      wrap.className = 'dd-result-group';
+      wrap.className = `dd-result-group${i > 0 ? ' bonus empty' : ''}`;
       wrap.dataset.pool = g.pool;
       const label = document.createElement('div');
       label.className = 'dd-result-group__label';
@@ -91,21 +93,32 @@ export class HUD {
       balls.className = 'dd-result-group__balls';
       wrap.append(label, balls);
       this.results.appendChild(wrap);
-      this.groups[g.pool] = { ballsEl: balls, bonus: i > 0 };
+      this.groups[g.pool] = { wrap, ballsEl: balls, bonus: i > 0 };
     });
+    this._sizeChips();
   }
 
-  /** Fill chips from resultsByPool. */
+  /** Fill chips; bonus rows stay hidden until they actually have a ball. */
   setResults(resultsByPool) {
     for (const [poolId, group] of Object.entries(this.groups)) {
       group.ballsEl.innerHTML = '';
-      for (const v of resultsByPool[poolId] || []) {
+      const vals = resultsByPool[poolId] || [];
+      for (const v of vals) {
         const chip = document.createElement('div');
         chip.className = `dd-chip pop${group.bonus ? ' bonus' : ''}`;
         chip.textContent = v;
         group.ballsEl.appendChild(chip);
       }
+      if (group.bonus) group.wrap.classList.toggle('empty', vals.length === 0);
     }
+  }
+
+  /** Size the result chips so the main group always fits on ONE line. */
+  _sizeChips() {
+    const vw = Math.min(window.visualViewport?.width || window.innerWidth, 660);
+    const n = Math.max(this.mainCount || 6, 1);
+    const size = Math.max(20, Math.min(40, (vw - 40 - (n - 1) * 7) / n));
+    this.results.style.setProperty('--chip', `${size.toFixed(1)}px`);
   }
 
   setPhase(state, winner) {
@@ -118,7 +131,8 @@ export class HUD {
       case State.ARMING:
       case State.CAPTURING: b.textContent = 'Выбор шара…'; b.disabled = true; break;
       case State.TRANSIT:
-      case State.DISPLAY: b.textContent = winner != null ? `Шар №${winner}` : 'Выбор шара…'; b.disabled = true; break;
+      case State.DISPLAY:
+      case State.STOPPING: b.textContent = winner != null ? `Шар №${winner}` : 'Выбор шара…'; b.disabled = true; break;
       case State.COMPLETE: b.textContent = 'Новый розыгрыш'; b.disabled = false; break;
       default: break;
     }

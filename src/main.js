@@ -101,6 +101,7 @@ async function main() {
     rotor.update(dt);
     physics.step(dt);
     balls.clampSpeeds();
+    balls.updateTrackers(dt); // per-ball motion history for the anti-stall system
     balls.sync();
     if (draw.winner && (draw.state === State.TRANSIT || draw.state === State.DISPLAY)) focus.copy(draw.winner.mesh.position);
     else focus.set(0, 0, 0);
@@ -162,6 +163,21 @@ async function main() {
       return;
     }
 
+    // Lightweight results-layout check (no physics): fill every group full.
+    if (shot === 'uiresults') {
+      const res = {};
+      for (const id of Object.keys(draw.pools)) {
+        const pool = draw.pools[id];
+        res[id] = Array.from({ length: pool.drawCount }, (_, k) => pool.min + k);
+      }
+      draw.resultsByPool = res;
+      hud.setResults(res);
+      hud.setPhase(State.COMPLETE, res[draw.profile.mainPool.id]?.[0] ?? 1);
+      director.update(1, State.IDLE, focus); director.snap();
+      requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+      return;
+    }
+
     const autostart = shot !== 'idle';
     if (autostart) draw.start();
     const reached = () => {
@@ -173,12 +189,28 @@ async function main() {
         case 'chute': return draw.state === State.TRANSIT && draw._u > 0.78;
         case 'display': return draw.state === State.DISPLAY && Object.values(draw.resultsByPool).some((a) => a.length >= 1);
         case 'bonus': return draw.state === State.DISPLAY && (draw.resultsByPool.bonus?.length || draw.resultsByPool.stars?.length);
-        case 'complete': return draw.state === State.COMPLETE;
+        case 'complete': case 'drawtest': return draw.state === State.COMPLETE;
         default: return true;
       }
     };
     const minSteps = shot === 'idle' ? 90 : 0;
-    for (let i = 0; i < 12000; i++) { stepSim(dt); if (i >= minSteps && reached()) break; }
+    // Full-draw diagnostics: worst per-ball stuck times + that the rotor never stops.
+    const track = shot === 'drawtest' || shot === 'complete';
+    let mStill = 0, mTop = 0, mBot = 0, mWall = 0, rotorMin = 1e9, activeStates = 0;
+    for (let i = 0; i < 22000; i++) {
+      stepSim(dt);
+      if (track && i % 5 === 0) {
+        const s = balls.stuckStats();
+        mStill = Math.max(mStill, s.stillMax); mTop = Math.max(mTop, s.topMax);
+        mBot = Math.max(mBot, s.bottomMax); mWall = Math.max(mWall, s.wallMax);
+        const st = draw.state;
+        if (st === State.MIXING || st === State.CAPTURING || st === State.TRANSIT || st === State.DISPLAY) {
+          rotorMin = Math.min(rotorMin, Math.abs(rotor.speedPrimary)); activeStates++;
+        }
+      }
+      if (i >= minSteps && reached()) break;
+    }
+    if (track) console.log(`DRAWTEST maxStill=${mStill.toFixed(2)}s maxTop=${mTop.toFixed(2)}s maxBottom=${mBot.toFixed(2)}s maxWall=${mWall.toFixed(2)}s rotorMinDuringDraw=${(rotorMin === 1e9 ? 0 : rotorMin).toFixed(2)}rad/s`);
     console.log(`SHOT ${shot} state=${draw.state} results=${JSON.stringify(draw.resultsByPool)} inDrum=${balls.inDrumCount()}`);
     director.update(1, draw.state, focus); director.snap();
     requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });

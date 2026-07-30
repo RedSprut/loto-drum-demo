@@ -1,25 +1,13 @@
 /**
- * Camera director — deliberately near-static and always frontal. It never orbits
- * the drum, never shows the back, never uses random angles. Each draw stage maps
- * to a pre-designed frontal shot (main / slight-zoom mixing / outlet / display),
- * and the rig critically-damps between them. On portrait screens it pulls back a
- * little so the whole machine stays in frame.
+ * Camera director — deliberately fixed and frontal. There is exactly ONE shot
+ * during the whole draw (MAIN). The only permitted movement is a small zoom
+ * toward the outlet while the drawn ball travels to its slot (TRANSIT), which
+ * eases back to MAIN afterwards. No orbiting, no side moves, no random angles,
+ * no per-state repositioning.
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 import { State } from '../sim/draw.js';
-
-const SHOT_FOR = {
-  [State.IDLE]: 'MAIN',
-  [State.STARTUP]: 'MAIN',
-  [State.MIXING]: 'MIXING',
-  [State.ARMING]: 'MIXING',
-  [State.CAPTURING]: 'MIXING',
-  [State.TRANSIT]: 'OUTLET',
-  [State.DISPLAY]: 'DISPLAY',
-  [State.RELOAD]: 'MAIN',
-  [State.COMPLETE]: 'MAIN',
-};
 
 export class CameraDirector {
   constructor(camera) {
@@ -33,19 +21,19 @@ export class CameraDirector {
   }
 
   update(dt, state, focus) {
-    const name = SHOT_FOR[state] || 'MAIN';
-    this.shot = name;
-    const shot = this.shots[name];
+    // Zoom to the outlet only while the ball is exiting; MAIN everywhere else.
+    const exiting = state === State.TRANSIT;
+    const shot = exiting ? this.shots.BALL_EXIT : this.shots.MAIN;
+    this.shot = exiting ? 'BALL_EXIT' : 'MAIN';
     this.pos.set(...shot.pos);
     this.look.set(...shot.target);
+    if (exiting && focus) this.look.lerp(focus, 0.2); // follow the ball a touch, no sideways move
 
-    // While a ball travels, dip the look toward it a touch (no sideways move).
-    if (name === 'OUTLET' && focus) this.look.lerp(focus, 0.25);
-
-    // Portrait pull-back keeps the whole machine framed.
+    // Portrait pull-back keeps the whole machine framed (composition unchanged
+    // during the draw — the pull-back only depends on aspect, not on state).
     const aspect = this.camera.aspect || 1.6;
     if (aspect < 0.95) {
-      const pull = Math.min(2.2, 1.1 / aspect);
+      const pull = Math.min(2.2, 1.12 / aspect);
       this.pos.sub(this.look).multiplyScalar(pull).add(this.look);
     }
 

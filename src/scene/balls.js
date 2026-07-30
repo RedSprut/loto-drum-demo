@@ -13,6 +13,28 @@ import { secureRandom } from '../util/prng.js';
 // Local direction of the equator medallion at u=0.625 on a THREE.SphereGeometry.
 const MEDALLION_DIR = new THREE.Vector3(Math.cos(0.625 * Math.PI * 2), 0, -Math.sin(0.625 * Math.PI * 2)).normalize();
 
+/** Per-ball motion history, so we can guarantee every ball keeps moving. */
+class BallMotionTracker {
+  constructor(body) {
+    const t = body.translation();
+    this.lx = t.x; this.ly = t.y; this.lz = t.z;
+    this.still = 0; this.top = 0; this.bottom = 0; this.wall = 0;
+    this.linSpeed = 0; this.angSpeed = 0;
+  }
+
+  update(body, dt, R, br) {
+    const p = body.translation(), v = body.linvel(), w = body.angvel();
+    const moved = Math.hypot(p.x - this.lx, p.y - this.ly, p.z - this.lz);
+    this.linSpeed = Math.hypot(v.x, v.y, v.z);
+    this.angSpeed = Math.hypot(w.x, w.y, w.z);
+    this.still = (moved < br * 0.03 && this.linSpeed < 0.15 && this.angSpeed < 0.2) ? this.still + dt : 0;
+    this.top = p.y > R * 0.45 ? this.top + dt : 0;
+    this.bottom = p.y < -R * 0.55 ? this.bottom + dt : 0;
+    this.wall = Math.hypot(p.x, p.y, p.z) > R * 0.88 ? this.wall + dt : 0;
+    this.lx = p.x; this.ly = p.y; this.lz = p.z;
+  }
+}
+
 function colorFor(value, colorSet) {
   const set = CONFIG.ball.colorSets[colorSet] || CONFIG.ball.colorSets.multicolor;
   // Group by tens so each number range shares a colour (like real lottery balls).
@@ -83,7 +105,7 @@ export class Balls {
       const p = home[i];
       const { body, collider } = this.physics.addBall(p.x, p.y, p.z);
       this._kick(body);
-      this.items.push({ value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false });
+      this.items.push({ value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false, tracker: new BallMotionTracker(body) });
     });
   }
 
@@ -119,6 +141,34 @@ export class Balls {
   /** Wake all in-play balls (called during MIXING so nothing dozes off). */
   keepAwake() {
     for (const it of this.items) if (!it.parked && it.body.isSleeping()) it.body.wakeUp();
+  }
+
+  /** In-play items (not drawn, not parked). */
+  activeItems() {
+    const out = [];
+    for (const it of this.items) if (!it.drawn && !it.parked) out.push(it);
+    return out;
+  }
+
+  /** Advance every active ball's motion tracker. */
+  updateTrackers(dt) {
+    const R = CONFIG.drum.radius, br = CONFIG.ball.radius;
+    for (const it of this.items) if (!it.drawn && !it.parked) it.tracker.update(it.body, dt, R, br);
+  }
+
+  /** Worst-case stuck timers + ratios across active balls (for diagnostics). */
+  stuckStats() {
+    const arr = this.activeItems();
+    const n = arr.length || 1;
+    let sMax = 0, tMax = 0, bMax = 0, wMax = 0, sN = 0, tN = 0, bN = 0, wN = 0;
+    for (const it of arr) {
+      const k = it.tracker;
+      sMax = Math.max(sMax, k.still); tMax = Math.max(tMax, k.top); bMax = Math.max(bMax, k.bottom); wMax = Math.max(wMax, k.wall);
+      if (k.still > 0.8) sN++; if (k.top > 0.8) tN++; if (k.bottom > 0.8) bN++; if (k.wall > 1.0) wN++;
+    }
+    return { count: arr.length, stillMax: sMax, topMax: tMax, bottomMax: bMax, wallMax: wMax,
+      stillN: sN, topN: tN, bottomN: bN, wallN: wN,
+      stillRatio: sN / n, topRatio: tN / n, bottomRatio: bN / n, wallRatio: wN / n };
   }
 
   /** Fraction of in-play balls that are meaningfully moving. */

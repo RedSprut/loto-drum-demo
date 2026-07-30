@@ -10,12 +10,12 @@
  */
 export const CONFIG = {
   draw: {
-    startupSeconds: 0.9,  // rotor spins up
-    mixSeconds: 3.4,      // forced mixing before the gate arms
-    armSeconds: 0.7,      // rotor slows + gate opens
-    captureTimeout: 6.5,  // safety: gently funnel toward the throat if nobody drops
-    displaySeconds: 1.5,  // hold on the winner in the rack before the next pick
-    reloadSeconds: 1.4,   // transition when a separate bonus pool is loaded
+    startupSeconds: 1.0,  // rotor spins up (mixer already running)
+    mixSeconds: 2.6,      // mixing window before each capture (rotor never stops)
+    captureTimeout: 5.0,  // escalate the throat suction if nobody has dropped yet
+    displaySeconds: 1.4,  // brief hold on the winner — the rest keep mixing
+    reloadSeconds: 1.6,   // separate bonus pool swap (rotor keeps spinning)
+    stoppingSeconds: 1.3, // rotor winds down AFTER the last ball has settled
   },
 
   ball: {
@@ -100,21 +100,25 @@ export const CONFIG = {
   air: {
     lift: 1.05,     // peak central updraft (just over a ball's weight → it floats there)
     coneR: 0.5,     // horizontal radius fraction where updraft → 0 (then downdraft)
-    edgeDown: 0.45, // max downdraft near the walls (edges fall)
+    edgeDown: 0.2,  // small downdraft near the walls (don't pin balls to the lower wall)
     topY: 1.3,      // updraft tapers to zero by this height
-    swirl: 0.22,
-    turb: 0.55,     // turbulence amplitude (chaotic, independent per ball)
+    swirl: 0.06,    // minimal so balls aren't centrifuged onto the wall
+    edgeInward: 0.6, // steady inward pull that grows toward the wall (anti wall-hug)
+    turb: 0.95,     // strong turbulence so every ball is constantly buffeted (air machine)
     turbScale: 0.85,
-    turbTime: 0.7,
+    turbTime: 0.9,
+    // Per-ball anti-stall corrective forces (in ball-weight units) + trigger times.
+    bottomKick: 1.35, bottomT: 0.4,  // stuck low → strong lift + scatter
+    topPush: 1.2, topT: 0.4,         // hanging high → push down, let gravity return it
+    wallPull: 2.2, wallT: 0.4,       // pinned to wall → hard inward pull, cut its swirl
+    stillKick: 1.0, stillT: 0.3,     // barely moving → firm kick back into the flow
+    captureLiftScale: 0.55,          // reduce (not stop) the updraft while capturing
   },
 
-  // Anti-stall: a very weak swirl, applied ONLY when metrics show a real dead
-  // zone. Never targets a ball.
-  antiStall: { swirl: 0.03, activityFloor: 0.5 },
-
-  // Gentle uniform funnel during CAPTURING so a ball reliably settles into the
-  // throat. Applied to every ball equally — it never targets a winner.
-  capture: { center: 0.09, down: 0.25, escalate: 2.5 },
+  // Localized suction at the throat during CAPTURING: pulls whatever ball wanders
+  // into the bottom-centre drain down and out, WITHOUT stopping the mixer. Applied
+  // to every ball in the zone equally — never by number.
+  capture: { drainR: 0.6, drainY: -1.6, down: 2.2, inward: 1.2, escalate: 1.8 },
 
   exit: {
     tube: [
@@ -154,11 +158,11 @@ export const CONFIG = {
     fov: 40,
     near: 0.1,
     far: 200,
+    // Only two shots: a fixed frontal MAIN for the whole draw, and a small zoom
+    // toward the outlet used ONLY while the drawn ball travels to its slot.
     shots: {
-      MAIN:   { pos: [0, 0.4, 12.5], target: [0, -0.4, 0] },
-      MIXING: { pos: [0, 0.4, 12.0], target: [0, -0.4, 0] }, // ~4% closer
-      OUTLET: { pos: [0, 0.1, 12.0], target: [0, -1.4, 1.9] },
-      DISPLAY:{ pos: [0, -0.1, 11.6], target: [0, -1.9, 3.1] },
+      MAIN:     { pos: [0, 0.2, 12.5], target: [0, -0.4, 0] },
+      BALL_EXIT:{ pos: [0, -0.1, 11.8], target: [0, -1.25, 1.8] }, // ~5.6% closer
     },
   },
 
