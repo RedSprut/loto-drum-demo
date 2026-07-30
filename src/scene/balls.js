@@ -115,9 +115,19 @@ export class Balls {
 
   _kick(body) {
     const s = () => (secureRandom() * 2 - 1);
-    body.setLinvel({ x: s() * 0.5, y: s() * 0.5, z: s() * 0.5 }, true);
-    body.setAngvel({ x: s() * 3, y: s() * 3, z: s() * 3 }, true);
+    body.setLinvel({ x: s() * 0.2, y: s() * 0.2, z: s() * 0.2 }, true);
+    body.setAngvel({ x: s() * 1.2, y: s() * 1.2, z: s() * 1.2 }, true);
     body.wakeUp();
+  }
+
+  /** Set linear+angular damping on all in-drum balls (e.g. high while resting at
+   *  IDLE so the freshly spawned bed settles quickly; low again while drawing). */
+  setDamping(d) {
+    for (const it of this.items) {
+      if (it.parked) continue;
+      it.body.setLinearDamping?.(d);
+      it.body.setAngularDamping?.(d);
+    }
   }
 
   /** Dispose every ball still in the drum (keeps parked winners in the rack).

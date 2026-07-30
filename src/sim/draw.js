@@ -77,7 +77,9 @@ export class DrawController {
     for (const id of Object.keys(this.pools)) this.resultsByPool[id] = [];
     // IDLE: rotor is a static, pass-through decoration so freshly spawned balls
     // fall straight to the bottom and rest (no piling on the shaft, no forces).
+    // High damping makes the spawned bed settle within ~2 s.
     this.winner = null; this.rotor.reset(); this.rotor.setSolid(false); this.drum.setWallSolid(true); this.rotor.setSpeed(CONFIG.rotor.speedIdle);
+    this.balls.setDamping(CONFIG.settle.damping);
     this.drum.closeGate();
     this._set(State.IDLE);
   }
