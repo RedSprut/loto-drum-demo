@@ -113,6 +113,31 @@ export class HUD {
     }
   }
 
+  /** Sort each result group ascending, animating chips to their new spots (FLIP).
+   *  Only the top UI reorders — the physical rack keeps the real draw order. */
+  sortResults(animate = true) {
+    for (const group of Object.values(this.groups)) {
+      const el = group.ballsEl;
+      const chips = [...el.children];
+      if (chips.length < 2) continue;
+      const firstLeft = animate ? new Map(chips.map((c) => [c, c.getBoundingClientRect().left])) : null;
+      chips.sort((a, b) => Number(a.textContent) - Number(b.textContent));
+      for (const c of chips) el.appendChild(c); // reorder the DOM (final = sorted)
+      if (!animate) continue;
+      for (const c of chips) { // invert: offset each chip back to where it was
+        const dx = firstLeft.get(c) - c.getBoundingClientRect().left;
+        c.style.transition = 'none';
+        c.style.transform = `translateX(${dx}px)`;
+      }
+      requestAnimationFrame(() => {
+        for (const c of chips) {
+          c.style.transition = 'transform 620ms cubic-bezier(.4,0,.2,1)';
+          c.style.transform = 'translateX(0)';
+        }
+      });
+    }
+  }
+
   /** Size the result chips so the main group always fits on ONE line. */
   _sizeChips() {
     const vw = Math.min(window.visualViewport?.width || window.innerWidth, 660);

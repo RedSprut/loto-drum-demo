@@ -10,8 +10,11 @@ import { CONFIG } from '../config.js';
 import { ballTexture } from '../util/numbers.js';
 import { secureRandom } from '../util/prng.js';
 
-// Local direction of the equator medallion at u=0.625 on a THREE.SphereGeometry.
-const MEDALLION_DIR = new THREE.Vector3(Math.cos(0.625 * Math.PI * 2), 0, -Math.sin(0.625 * Math.PI * 2)).normalize();
+// Local surface direction of the equator medallion at u=0.625 on a
+// THREE.SphereGeometry (mapping: at v=0.5, dir = (-cos(u·2π), 0, sin(u·2π))).
+const MEDALLION_DIR = new THREE.Vector3(-Math.cos(0.625 * Math.PI * 2), 0, Math.sin(0.625 * Math.PI * 2)).normalize();
+const _v = new THREE.Vector3();
+const _q = new THREE.Quaternion();
 
 /** Per-ball motion history, so we can guarantee every ball keeps moving. */
 class BallMotionTracker {
@@ -227,11 +230,29 @@ export class Balls {
 
   sync() {
     for (const it of this.items) {
+      if (it.parked) continue; // parked winners: mesh driven by the facing animation
       const t = it.body.translation();
       const q = it.body.rotation();
       it.mesh.position.set(t.x, t.y, t.z);
       it.mesh.quaternion.set(q.x, q.y, q.z, q.w);
     }
+  }
+
+  /** Smoothly turn each parked winner's MESH so its number faces the camera.
+   *  The Rapier body is never touched — only the visual mesh rotates. */
+  updateFacing(dt, camera) {
+    const k = 1 - Math.exp(-dt * 8); // ≈ settles in ~0.4 s
+    for (const it of this.items) {
+      if (!it.parked) continue;
+      _v.copy(camera.position).sub(it.mesh.position).normalize();
+      _q.setFromUnitVectors(MEDALLION_DIR, _v);
+      it.mesh.quaternion.slerp(_q, k);
+    }
+  }
+
+  /** Snap all parked winners to face the camera immediately (for stills). */
+  snapFacing(camera) {
+    for (const it of this.items) if (it.parked) Balls.faceCamera(it.mesh, camera);
   }
 
   /** In-play balls of the current pool (not yet drawn). */

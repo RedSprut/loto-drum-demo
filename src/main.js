@@ -63,13 +63,13 @@ async function main() {
     onLayout: (profile) => hud?.buildLayout(profile),
     onState: (s, w) => hud?.setPhase(s, w),
     onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
-    onDone: () => {},
+    onDone: () => { setTimeout(() => hud?.sortResults(true), 350); }, // pause, then sort ascending
   });
 
   const profileKey = GAME_PROFILES[params.get('profile')] ? params.get('profile') : DEFAULT_PROFILE;
 
   hud = new HUD(document.getElementById('hud'), {
-    onStart: () => draw.start(),
+    onStart: () => { draw.start(); hud.setResults(draw.resultsByPool); }, // clear the old row
     onReset: () => draw.reset(),
     onQuality: (v) => { if (v === 'auto') quality.unlock(); else quality.lock(v); },
     onProfile: (key) => { if (GAME_PROFILES[key]) draw.loadProfile(GAME_PROFILES[key]); },
@@ -117,6 +117,7 @@ async function main() {
     acc += dt;
     let steps = 0;
     while (acc >= FIXED && steps < 5) { stepSim(FIXED); acc -= FIXED; steps++; }
+    balls.updateFacing(dt, engine.camera); // turn parked winners' numbers to camera (mesh only)
     director.update(dt, draw.state, focus);
     quality.sample(stats.fps, dt);
     engine.render();
@@ -212,6 +213,8 @@ async function main() {
     }
     if (track) console.log(`DRAWTEST maxStill=${mStill.toFixed(2)}s maxTop=${mTop.toFixed(2)}s maxBottom=${mBot.toFixed(2)}s maxWall=${mWall.toFixed(2)}s rotorMinDuringDraw=${(rotorMin === 1e9 ? 0 : rotorMin).toFixed(2)}rad/s`);
     console.log(`SHOT ${shot} state=${draw.state} results=${JSON.stringify(draw.resultsByPool)} inDrum=${balls.inDrumCount()}`);
+    balls.snapFacing(engine.camera);
+    if (track) hud.sortResults(); // show the final sorted result in the stills
     director.update(1, draw.state, focus); director.snap();
     requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
   }

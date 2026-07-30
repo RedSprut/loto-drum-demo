@@ -21,13 +21,14 @@ export class CameraDirector {
   }
 
   update(dt, state, focus) {
-    // Zoom to the outlet only while the ball is exiting; MAIN everywhere else.
-    const exiting = state === State.TRANSIT;
+    // Small zoom to the outlet while the ball travels AND settles (so the number
+    // is readable close-up); MAIN everywhere else. No sideways move, no rotation.
+    const exiting = state === State.TRANSIT || state === State.DISPLAY;
     const shot = exiting ? this.shots.BALL_EXIT : this.shots.MAIN;
     this.shot = exiting ? 'BALL_EXIT' : 'MAIN';
     this.pos.set(...shot.pos);
     this.look.set(...shot.target);
-    if (exiting && focus) this.look.lerp(focus, 0.2); // follow the ball a touch, no sideways move
+    if (exiting && focus) this.look.lerp(focus, 0.28); // gently follow the ball to its slot
 
     // Portrait pull-back keeps the whole machine framed (composition unchanged
     // during the draw — the pull-back only depends on aspect, not on state).

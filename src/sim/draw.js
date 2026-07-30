@@ -13,7 +13,6 @@
  */
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
-import { Balls } from '../scene/balls.js';
 import { AirMix } from './airmix.js';
 import { poolsOf, drawQueueOf } from '../games.js';
 
@@ -197,8 +196,8 @@ export class DrawController {
     const p = this._path.getPoint(smoothstep(this._u), this._tmp);
     this.winner.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
     if (this._u >= 1) {
-      this.winner.parked = true;
-      Balls.faceCamera(this.winner.mesh, this.camera); // turn the number to the viewer
+      this.winner.mesh.position.copy(p);  // freeze the mesh exactly in its slot
+      this.winner.parked = true;          // number now turns to face the camera (mesh only)
       this._set(State.DISPLAY);
     }
   }
