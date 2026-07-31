@@ -48,6 +48,7 @@ export class DrawController {
     this.timer = 0;
     this.winner = null;
     this._path = null; this._u = 0; this._tmp = new THREE.Vector3();
+    this._revealed = false; this._revealAt = 0; this._debug = false;
     this.mixActivity = 1; this.stalledFor = 0; this._warned = false;
     this._phaseIdx = 0; this._phaseTimer = 0;
     this.air = new AirMix();
@@ -136,8 +137,19 @@ export class DrawController {
         this._advanceTransit(dt);
         break;
       case State.DISPLAY:
-        this._driveMixer(dt);       // still mixing — no calm pause between picks
-        if (this.timer > CONFIG.draw.displaySeconds) this._afterDisplay();
+        this._driveMixer(dt);       // the REST keep mixing
+        // Reveal the number ONLY after the ball has settled AND faced the camera.
+        if (!this._revealed) {
+          const w = this.winner;
+          if (w && w.parked && (w.facingDot ?? 0) >= CONFIG.reveal.facingDot && !w.ts.facing) {
+            w.ts.facing = performance.now(); // moment the number first faced the viewer
+          }
+          // Publish only after the ball has RESTED + faced the camera for a short
+          // beat, so the viewer clearly sees the physical ball before the number.
+          const held = w?.ts.facing && (performance.now() - w.ts.facing) / 1000 >= CONFIG.reveal.hold;
+          if (w && w.parked && (held || this.timer > CONFIG.reveal.maxWait)) this._reveal();
+        }
+        if (this._revealed && (this.timer - this._revealAt) > CONFIG.draw.displaySeconds) this._afterDisplay();
         break;
       case State.RELOAD:
         this._driveMixer(dt);
@@ -166,6 +178,11 @@ export class DrawController {
             this._set(State.COMPLETE);
           }
         }
+        break;
+      case State.COMPLETE:
+        // Keep letting the leftover bed settle + SLEEP so the final frame becomes
+        // (and stays) perfectly still — no artificial forces, just rest detection.
+        this.balls.updateSettling(dt);
         break;
       default: break;
     }
@@ -219,10 +236,11 @@ export class DrawController {
     const { RAPIER } = this.balls.physics;
     winner.drawn = true;
     winner.lifecycle = 'in-transit'; // SAME physical entity — never cloned/replaced
-    const poolId = this.currentPoolId;
-    this.resultsByPool[poolId].push(winner.value);
-    this._lastWinnerValue = winner.value;
+    winner.resultPool = this.currentPoolId; // the RESULT group (may differ from physical pool)
+    winner.ts = { capture: performance.now() };
     this.winner = winner;
+    this._revealed = false;       // the number is NOT shown yet — only after it settles + faces
+    this._lastWinnerValue = null; // status reverts to «Выбор шара…» until the reveal
     this.drum.closeGate();
 
     winner.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
@@ -232,21 +250,43 @@ export class DrawController {
     this._u = 0;
 
     this.balls.assertConservation();
-    this.hooks.onDraw?.(winner.value, poolId, this.resultsByPool);
-    this._set(State.TRANSIT);
+    this._set(State.TRANSIT); // top UI stays "Выбор шара…" (no chip)
   }
 
   _advanceTransit(dt) {
     this._u = Math.min(1, this._u + dt / TRANSIT_SECONDS);
     const p = this._path.getPoint(smoothstep(this._u), this._tmp);
     this.winner.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
+    if (this._u > 0.55 && !this.winner.ts.chute) this.winner.ts.chute = performance.now();
     if (this._u >= 1) {
       this.winner.mesh.position.copy(p);  // freeze the mesh exactly in its slot
-      this.winner.parked = true;          // number now turns to face the camera (mesh only)
+      this.winner.parked = true;          // now turns to face the camera (mesh only)
       this.winner.lifecycle = 'in-rack';
+      this.winner.ts.rack = this.winner.ts.settled = performance.now();
       this.balls.assertConservation();
       this._set(State.DISPLAY);
     }
+  }
+
+  /** Reveal the top-UI number ONLY once the physical ball is in its rack slot,
+   *  settled and turned to face the viewer. Guarded by assertions. */
+  _reveal() {
+    const w = this.winner;
+    if (w.lifecycle !== 'in-rack') throw new Error(`Result revealed before ball reached rack: #${w.value}`);
+    if (!w.parked) throw new Error(`Result revealed before ball settled: #${w.value}`);
+    if ((w.facingDot ?? 0) < 0.9) throw new Error(`Result revealed before number faced viewer: #${w.value}`);
+    w.ts.facing = w.ts.facing || performance.now();
+    w.ts.reveal = performance.now();
+    const poolId = w.resultPool;
+    this.resultsByPool[poolId].push(w.value);          // ← the ONLY place a result is published
+    if (this.resultsByPool[poolId][this.resultsByPool[poolId].length - 1] !== w.value) {
+      throw new Error(`UI/physical ball mismatch: pushed ${this.resultsByPool[poolId].at(-1)} ≠ ball ${w.value}`);
+    }
+    this._lastWinnerValue = w.value;
+    this._revealed = true;
+    this._revealAt = this.timer;
+    if (this._debug) console.log(`RESULT_REVEAL ballId=${w.id} number=${w.value} pool=${poolId} lifecycle=${w.lifecycle} settled=${!!w.parked} facingDot=${(w.facingDot ?? 0).toFixed(3)} ts=${JSON.stringify(w.ts)}`);
+    this.hooks.onDraw?.(w.value, poolId, this.resultsByPool);
   }
 
   _afterDisplay() {

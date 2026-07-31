@@ -65,6 +65,7 @@ async function main() {
     onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
     onDone: () => { setTimeout(() => hud?.sortResults(true), 350); }, // pause, then sort ascending
   });
+  draw._debug = debug; // RESULT_REVEAL diagnostics in the headless harness
 
   const profileKey = GAME_PROFILES[params.get('profile')] ? params.get('profile') : DEFAULT_PROFILE;
 
@@ -89,10 +90,12 @@ async function main() {
   // headless=new doesn't composite the WebGL canvas into --screenshot, so blit
   // the rendered frame into a DOM <img> (which IS captured) for the harness.
   function blitToDOM() {
+    const el = engine.renderer.domElement;
+    const r = el.getBoundingClientRect(); // exact canvas box (top-left, minus the reserved band)
     const img = document.createElement('img');
-    img.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:1;';
+    img.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;z-index:1;`;
     img.onload = () => { document.body.dataset.shotReady = '1'; };
-    img.src = engine.renderer.domElement.toDataURL('image/png');
+    img.src = el.toDataURL('image/png');
     document.body.appendChild(img);
   }
 
@@ -105,6 +108,7 @@ async function main() {
     balls.clampSpeeds();
     balls.updateTrackers(dt); // per-ball motion history for the anti-stall system
     balls.sync();
+    balls.updateFacing(dt, engine.camera); // turn parked winners' numbers to camera (deterministic, in-step)
     if (draw.winner && (draw.state === State.TRANSIT || draw.state === State.DISPLAY)) focus.copy(draw.winner.mesh.position);
     else focus.set(0, 0, 0);
   }
@@ -119,7 +123,6 @@ async function main() {
     acc += dt;
     let steps = 0;
     while (acc >= FIXED && steps < 5) { stepSim(FIXED); acc -= FIXED; steps++; }
-    balls.updateFacing(dt, engine.camera); // turn parked winners' numbers to camera (mesh only)
     director.update(dt, draw.state, focus);
     quality.sample(stats.fps, dt);
     engine.render();
@@ -166,6 +169,50 @@ async function main() {
       return;
     }
 
+    // Fairness audit (READ-ONLY): run many independent FIRST-ball draws and
+    // measure the distribution of the first number out. Nothing about the model
+    // is changed — each trial only gets a fresh crypto initial layout. Reports
+    // chi-square vs uniform + whether winners are biased by where they started
+    // (initial height / initial proximity to the exit throat).
+    if (shot === 'fairtest') {
+      const N = parseInt(params.get('n') || '2000', 10);
+      const budgetMs = parseFloat(params.get('budget') || '540000');
+      const EX = 0, EY = exit.captureY, EZ = 0; // throat/exit reference point
+      const t0 = performance.now();
+      const freq = new Map();
+      let done = 0, sumHpct = 0, sumEpct = 0, sumSteps = 0, noCapture = 0;
+      for (let d = 0; d < N; d++) {
+        if (performance.now() - t0 > budgetMs) break;
+        draw.loadProfile(GAME_PROFILES[profileKey]); // fresh balls
+        draw.start();
+        // Snapshot each ball's INITIAL height + distance to the exit.
+        const snap = balls.items.map((it) => {
+          const p = it.body.translation();
+          return { id: it.id, y: p.y, dExit: Math.hypot(p.x - EX, p.y - EY, p.z - EZ) };
+        });
+        let steps = 0, cap = null;
+        while (steps < 2500) { stepSim(dt); steps++; if (draw.winner) { cap = draw.winner; break; } }
+        if (!cap) { noCapture++; continue; }
+        freq.set(cap.value, (freq.get(cap.value) || 0) + 1);
+        const nb = snap.length - 1;
+        const ws = snap.find((s) => s.id === cap.id);
+        sumHpct += snap.filter((s) => s.y < ws.y).length / nb;      // 0=started lowest, 1=highest
+        sumEpct += snap.filter((s) => s.dExit < ws.dExit).length / nb; // 0=started nearest exit
+        sumSteps += steps; done++;
+      }
+      const pool = draw.profile.mainPool;
+      const K = pool.max - pool.min + 1;
+      const exp = done / K;
+      let chi = 0, maxdev = 0; const rows = [];
+      for (let n = pool.min; n <= pool.max; n++) {
+        const o = freq.get(n) || 0; rows.push(o);
+        chi += (o - exp) ** 2 / exp; maxdev = Math.max(maxdev, Math.abs(o - exp) / exp);
+      }
+      console.log(`FAIRTEST profile=${profileKey} N=${done} noCapture=${noCapture} K=${K} exp=${exp.toFixed(2)} chiSquare=${chi.toFixed(1)} df=${K - 1} maxRelDev=${(maxdev * 100).toFixed(1)}% avgWinnerHeightPct=${(sumHpct / done).toFixed(3)} avgWinnerExitProximityPct=${(sumEpct / done).toFixed(3)} avgCaptureSteps=${(sumSteps / done).toFixed(0)}`);
+      console.log(`FAIRFREQ min=${pool.min} counts=${JSON.stringify(rows)}`);
+      return;
+    }
+
     // Calm-start check: no draw started; after `sec` the machine must be at rest.
     if (shot === 'idlecheck') {
       const sec = parseFloat(params.get('sec') || '3');
@@ -185,7 +232,6 @@ async function main() {
       let lastRack = -1;
       for (let i = 0; i < 30000; i++) {
         stepSim(dt);
-        balls.updateFacing(dt, engine.camera);
         const rack = balls.items.filter((it) => it.parked).length;
         if (rack !== lastRack) {
           lastRack = rack;
@@ -207,6 +253,44 @@ async function main() {
       for (const it of a) { const v = it.body.linvel(); if (Math.hypot(v.x, v.y, v.z) > 0.1) mv++; if (it.body.isSleeping()) asleep++; if (it.body.bodyType() !== physics.RAPIER.RigidBodyType.Dynamic) kin++; }
       const ss2 = balls.settleStatus();
       console.log(`AFTERCOMPLETE +5s state=${draw.state} rotorP=${rotor.speedPrimary.toFixed(3)} rotorS=${rotor.speedSecondary.toFixed(3)} movingBalls=${mv} suspended=${ss2.suspended} kinematicInDrum=${kin} asleep=${asleep}/${a.length} maxY=${ss2.maxY.toFixed(2)}`);
+      balls.snapFacing(engine.camera); hud.sortResults(false);
+      director.update(1, draw.state, focus); director.snap();
+      requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });
+      return;
+    }
+
+    // Reveal-timing audit: the top-UI number for a ball must appear ONLY after
+    // that ball is in-rack, settled and facing the camera — never during
+    // mixing/capture/transit. Logs per-ball timestamps and flags any violation.
+    if (shot === 'revealtest') {
+      draw.start();
+      const seen = [];       // {id, value, ts}
+      let violations = 0;
+      for (let i = 0; i < 30000; i++) {
+        stepSim(dt);
+        // Invariant: while a ball is mixing/captured/in transit its number must
+        // NOT be in the published results yet.
+        const w = draw.winner;
+        if (w && !draw._revealed && (draw.state === State.TRANSIT || draw.state === State.CAPTURING)) {
+          const pub = draw.resultsByPool[w.resultPool] || [];
+          if (pub.includes(w.value)) { console.log(`VIOLATION early-reveal ball=${w.value} state=${draw.state}`); violations++; }
+        }
+        // Capture each reveal exactly once.
+        if (w && draw._revealed && !seen.find((s) => s.id === w.id)) {
+          seen.push({ id: w.id, value: w.value, ts: { ...w.ts }, lifecycle: w.lifecycle, facingDot: w.facingDot });
+        }
+        if (draw.state === State.COMPLETE) break;
+      }
+      for (const s of seen) {
+        const t = s.ts;
+        const ordered = t.capture < t.chute && t.chute < t.rack && t.rack <= t.settled
+          && t.settled <= (t.facing ?? t.reveal) && (t.facing ?? t.reveal) <= t.reveal;
+        if (!ordered || s.lifecycle !== 'in-rack') violations++;
+        console.log(`REVEAL id=${s.id} n=${s.value} lifecycle=${s.lifecycle} facingDot=${(s.facingDot ?? 0).toFixed(3)} `
+          + `capture=${t.capture?.toFixed(0)} chute=${t.chute?.toFixed(0)} rack=${t.rack?.toFixed(0)} `
+          + `settled=${t.settled?.toFixed(0)} facing=${t.facing?.toFixed(0)} reveal=${t.reveal?.toFixed(0)} ordered=${ordered}`);
+      }
+      console.log(`REVEALTEST reveals=${seen.length} violations=${violations} results=${JSON.stringify(draw.resultsByPool)}`);
       balls.snapFacing(engine.camera); hud.sortResults(false);
       director.update(1, draw.state, focus); director.snap();
       requestAnimationFrame(() => { engine.render(); engine.render(); blitToDOM(); });

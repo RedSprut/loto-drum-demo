@@ -9,6 +9,10 @@
  * this file holds only the physics/visual tunables.
  */
 export const CONFIG = {
+  // The top-UI number is revealed ONLY after the physical ball is in its rack
+  // slot, settled and turned so its number faces the viewer.
+  reveal: { facingDot: 0.985, maxWait: 2.8, hold: 0.35 },
+
   draw: {
     startupSeconds: 1.0,  // rotor spins up (mixer already running)
     mixSeconds: 2.6,      // mixing window before each capture (rotor never stops)

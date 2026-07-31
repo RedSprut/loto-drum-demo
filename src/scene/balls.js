@@ -14,7 +14,9 @@ import { secureRandom } from '../util/prng.js';
 // THREE.SphereGeometry (mapping: at v=0.5, dir = (-cos(u·2π), 0, sin(u·2π))).
 const MEDALLION_DIR = new THREE.Vector3(-Math.cos(0.625 * Math.PI * 2), 0, Math.sin(0.625 * Math.PI * 2)).normalize();
 const _v = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
+let _ballId = 0;
 
 /** Per-ball motion history, so we can guarantee every ball keeps moving. */
 class BallMotionTracker {
@@ -107,7 +109,7 @@ export class Balls {
       const p = home[i];
       const { body, collider } = this.physics.addBall(p.x, p.y, p.z);
       this._kick(body);
-      this.items.push({ value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false, lifecycle: 'inside-drum', settledTime: 0, tracker: new BallMotionTracker(body) });
+      this.items.push({ id: ++_ballId, value, poolId: pool.id, colorSet: pool.colorSet, body, collider, mesh, drawn: false, parked: false, lifecycle: 'inside-drum', settledTime: 0, facingDot: 0, tracker: new BallMotionTracker(body) });
     });
     this._assertUnique(pool.id);
     this.assertConservation();
@@ -357,14 +359,20 @@ export class Balls {
    *  clear its microscopic jitter and let it SLEEP (a truly static final frame). */
   updateSettling(dt) {
     const S = CONFIG.settle;
+    // A ball only counts as settled (and may sleep) once it is actually in the
+    // LOWER region of the sphere. A ball drifting slowly downward higher up has a
+    // low speed too, but it is NOT at rest — without this gate it would be marked
+    // "settled" and frozen mid-drum, leaving a ball hanging in the air.
+    const restY = -CONFIG.drum.radius * 0.3;
     for (const it of this.items) {
       if (it.drawn || it.parked) continue;
       if (it.body.isSleeping()) { it.settledTime = S.hold; continue; }
-      const v = it.body.linvel(), w = it.body.angvel();
+      const p = it.body.translation(), v = it.body.linvel(), w = it.body.angvel();
       const lin = Math.hypot(v.x, v.y, v.z), ang = Math.hypot(w.x, w.y, w.z);
-      it.settledTime = (lin < S.linThresh && ang < S.angThresh) ? (it.settledTime || 0) + dt : 0;
-      // A resting ball (can't hover under gravity) → zero the jitter and sleep.
-      if (it.settledTime > 0.8 && lin < 0.05 && ang < 0.08) {
+      const low = p.y < restY;
+      it.settledTime = (low && lin < S.linThresh && ang < S.angThresh) ? (it.settledTime || 0) + dt : 0;
+      // A resting ball (low, can't hover under gravity) → zero jitter and sleep.
+      if (low && it.settledTime > 0.8 && lin < 0.05 && ang < 0.08) {
         it.body.setLinvel({ x: 0, y: 0, z: 0 }, false);
         it.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
         it.body.sleep?.();
@@ -406,8 +414,14 @@ export class Balls {
     for (const it of this.items) {
       if (!it.parked) continue;
       _v.copy(camera.position).sub(it.mesh.position).normalize();
+      // Already dead-on and the view isn't moving → leave the mesh EXACTLY put, so
+      // a parked winner is perfectly still (no residual micro-rotation/ghosting).
+      if (it.facingDot > 0.99995) { _v2.copy(MEDALLION_DIR).applyQuaternion(it.mesh.quaternion); it.facingDot = _v2.dot(_v); if (it.facingDot > 0.99995) continue; }
       _q.setFromUnitVectors(MEDALLION_DIR, _v);
       it.mesh.quaternion.slerp(_q, k);
+      // How well the number medallion currently faces the camera (1 = dead on).
+      _v2.copy(MEDALLION_DIR).applyQuaternion(it.mesh.quaternion);
+      it.facingDot = _v2.dot(_v);
     }
   }
 

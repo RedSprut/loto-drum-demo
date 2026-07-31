@@ -128,8 +128,21 @@ export class RenderEngine {
   resize() {
     // Prefer the visual viewport (correct on iOS Safari as the toolbar shows/hides).
     const vv = window.visualViewport;
-    const w = Math.round((vv && vv.width) || this.canvas.clientWidth || window.innerWidth);
-    const h = Math.round((vv && vv.height) || this.canvas.clientHeight || window.innerHeight);
+    let w = Math.round((vv && vv.width) || this.canvas.clientWidth || window.innerWidth);
+    let vh = Math.round((vv && vv.height) || this.canvas.clientHeight || window.innerHeight);
+    // Test-only viewport override (?vw=&vh=) so a real phone aspect can be forced
+    // in the headless harness, which ignores --window-size. Never used in prod.
+    const q = new URLSearchParams(location.search);
+    if (q.has('vw')) w = parseInt(q.get('vw'), 10);
+    if (q.has('vh')) vh = parseInt(q.get('vh'), 10);
+    // Reserve an opaque bottom band for the status/button/gear so the 3D canvas
+    // (and therefore the physical tray at its bottom edge) never sits under the
+    // controls. The canvas is anchored top-left, so the band is the empty strip
+    // below it. Vertical FOV is unchanged → the tray is not cropped, only the
+    // overall frame gets a little shorter on tight screens.
+    const band = reservedBand(w, vh);
+    const h = Math.max(260, vh - band);
+    document.documentElement.style.setProperty('--dd-band', `${band}px`);
     const dpr = Math.min(window.devicePixelRatio || 1, this.preset.dpr);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, true); // update CSS too so buffer + element match
@@ -144,6 +157,18 @@ export class RenderEngine {
     if (this.bloom.enabled) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
   }
+}
+
+/** Height (px) of the bottom band reserved for status + button + gear, so the
+ *  3D canvas (and the physical tray at its bottom edge) never sits under them.
+ *  Includes the iOS home-indicator safe area. */
+function reservedBand(w, h) {
+  const cs = getComputedStyle(document.documentElement);
+  const safeB = parseFloat(cs.getPropertyValue('--safe-b')) || 0;
+  // status line (~22) + button (~52) + paddings. A touch taller on phones.
+  const base = w <= 480 ? 108 : 116;
+  // Never eat more than ~28% of a very short window.
+  return Math.min(base + safeB, Math.round(h * 0.28));
 }
 
 /** Procedural studio HDRi-style equirectangular texture (no external assets). */

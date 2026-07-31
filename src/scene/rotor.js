@@ -56,6 +56,14 @@ export class Rotor {
 
     const armGeo = new THREE.CylinderGeometry(Rr.armRadius, Rr.armRadius, 1, 12);
     const pusherGeo = new THREE.CapsuleGeometry(Rr.pusherRadius, Rr.pusherHalf * 2, 8, 14);
+    // Visual-only mounting so the mechanism reads as ONE assembly: axle → collar
+    // (boss clamped on the shaft) → arm (socketed into the collar, reaching the
+    // shaft) → hammer. Physics colliders are unchanged (still Rr.armInner→armOuter).
+    const BOSS_R = Rr.hubRadius;                    // ≈0.2 — a clear collar on the axle
+    const bossGeo = new THREE.CylinderGeometry(BOSS_R, BOSS_R, BOSS_R * 1.5, 20);
+    const gussetGeo = new THREE.SphereGeometry(Rr.armRadius * 2.6, 12, 10);
+    // Slightly darker satin metal for the collars so they pop against the shaft.
+    const collarMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.graphite, metalness: 0.85, roughness: 0.32, envMapIntensity: 1.0 });
     let minTipGap = Infinity;
     for (let k = 0; k < Rr.armCount; k++) {
       const angle = (k / Rr.armCount) * Math.PI * 2;
@@ -73,8 +81,23 @@ export class Rotor {
       const dir = new THREE.Vector3(0, c, s);
       const qArm = new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle);
       this.colliders.push(this.physics.attachCylinder(this.bodyP, armLen / 2, Rr.armRadius, { x: xk, y: armMid * c, z: armMid * s }, qArm, { friction: 0.18 }));
+
+      // Mounting collar clamped on the shaft at this arm's depth.
+      const boss = new THREE.Mesh(bossGeo, collarMat);
+      boss.rotation.z = Math.PI / 2; boss.position.set(xk, 0, 0);
+      this.groupP.add(boss);
+
+      // Arm MESH runs all the way from the shaft (through the collar) out to the
+      // pusher (visual only, longer than the collider) — no floating gap.
+      const visInner = Rr.shaftRadius;
+      const visLen = armOuter - visInner;
+      const visMid = (visInner + armOuter) / 2;
       const arm = new THREE.Mesh(armGeo, silver);
-      arm.scale.set(1, armLen, 1); arm.position.set(xk, armMid * c, armMid * s); arm.quaternion.copy(qArm);
+      arm.scale.set(1, visLen, 1); arm.position.set(xk, visMid * c, visMid * s); arm.quaternion.copy(qArm);
+      // Welded gusset where the arm exits the collar.
+      const gusset = new THREE.Mesh(gussetGeo, silver);
+      gusset.position.set(xk, BOSS_R * c, BOSS_R * s);
+      this.groupP.add(gusset);
 
       // Pusher: tangential capsule, tilted about its radial axis.
       const qPush = new THREE.Quaternion().setFromAxisAngle(dir, tilt)
@@ -100,6 +123,9 @@ export class Rotor {
     const secOuter = S.radiusFrac * R;
     const secArmGeo = new THREE.CylinderGeometry(S.armRadius, S.armRadius, 1, 10);
     const secPushGeo = new THREE.CapsuleGeometry(S.pusherRadius, S.pusherHalf * 2, 8, 12);
+    // Central hub so the secondary arms visibly attach to their own little axle.
+    const secHub = new THREE.Mesh(new THREE.SphereGeometry(S.armRadius * 3.2, 14, 12), silver);
+    this.groupS.add(secHub);
     for (let k = 0; k < S.armCount; k++) {
       const angle = (k / S.armCount) * Math.PI * 2;
       const c = Math.cos(angle), s = Math.sin(angle);
@@ -109,8 +135,11 @@ export class Rotor {
       const qArm = this._secBase.clone().multiply(localArmQ);
       const localArmPos = new THREE.Vector3(0, armMid * c, armMid * s).applyQuaternion(this._secBase);
       this.colliders.push(this.physics.attachCylinder(this.bodyS, armLen / 2, S.armRadius, { x: localArmPos.x, y: localArmPos.y, z: localArmPos.z }, qArm, { friction: 0.18 }));
+      // Arm MESH reaches to the hub (visual only, collider unchanged).
+      const visInner = S.armRadius * 2.6, visLen = secOuter - visInner, visMid = (visInner + secOuter) / 2;
+      const visArmPos = new THREE.Vector3(0, visMid * c, visMid * s).applyQuaternion(this._secBase);
       const arm = new THREE.Mesh(secArmGeo, silver);
-      arm.scale.set(1, armLen, 1); arm.position.copy(localArmPos); arm.quaternion.copy(qArm);
+      arm.scale.set(1, visLen, 1); arm.position.copy(visArmPos); arm.quaternion.copy(qArm);
 
       const localPushQ = new THREE.Quaternion().setFromAxisAngle(X_AXIS, angle + Math.PI / 2);
       const qPush = this._secBase.clone().multiply(localPushQ);
@@ -142,13 +171,20 @@ export class Rotor {
     const a = CONFIG.rotor.accel;
     this.speedPrimary = THREE.MathUtils.damp(this.speedPrimary, this.targetPrimary, a, dt);
     this.speedSecondary = THREE.MathUtils.damp(this.speedSecondary, this.targetSecondary, a, dt);
+    // Hard stop: damp() only APPROACHES zero, so without this the angle would keep
+    // creeping every frame — a residual rotation that reads as ghosting after the
+    // machine has "stopped". Snap to a dead stop once the target is 0 and we've
+    // decayed to a crawl; then the quaternion is recomputed from a FIXED angle and
+    // every frame is byte-identical (perfectly sharp, truly still).
+    if (this.targetPrimary === 0 && Math.abs(this.speedPrimary) < 1e-3) this.speedPrimary = 0;
+    if (this.targetSecondary === 0 && Math.abs(this.speedSecondary) < 1e-3) this.speedSecondary = 0;
 
-    this.anglePrimary += this.speedPrimary * dt;
+    if (this.speedPrimary !== 0) this.anglePrimary += this.speedPrimary * dt;
     this._qp.setFromAxisAngle(X_AXIS, this.anglePrimary);
     this.groupP.quaternion.copy(this._qp);
     this.bodyP.setNextKinematicRotation({ x: this._qp.x, y: this._qp.y, z: this._qp.z, w: this._qp.w });
 
-    this.angleSecondary += this.speedSecondary * dt;
+    if (this.speedSecondary !== 0) this.angleSecondary += this.speedSecondary * dt;
     this._qs.copy(this._secBase).multiply(new THREE.Quaternion().setFromAxisAngle(X_AXIS, this.angleSecondary));
     this.groupS.quaternion.copy(this._qs);
     this.bodyS.setNextKinematicRotation({ x: this._qs.x, y: this._qs.y, z: this._qs.z, w: this._qs.w });
