@@ -138,16 +138,23 @@ export class DrawController {
         break;
       case State.DISPLAY:
         this._driveMixer(dt);       // the REST keep mixing
-        // Reveal the number ONLY after the ball has settled AND faced the camera.
+        // Reveal the number ONLY after the ball has fully settled AND faced the
+        // camera — the explicit BALL_EXIT completion predicate:
+        //   in-rack ∧ parked ∧ |linVel| < thr ∧ |angVel| < thr ∧ facingDot ≥ 0.985
+        // (linVel/angVel are the winner MESH speeds measured in main's step loop.)
         if (!this._revealed) {
           const w = this.winner;
-          if (w && w.parked && (w.facingDot ?? 0) >= CONFIG.reveal.facingDot && !w.ts.facing) {
-            w.ts.facing = performance.now(); // moment the number first faced the viewer
+          const settled = !!w && w.parked && w.lifecycle === 'in-rack'
+            && (w.facingDot ?? 0) >= CONFIG.reveal.facingDot
+            && (w._linSpeed ?? 1) < CONFIG.reveal.settleLinThresh
+            && (w._angSpeed ?? 1) < CONFIG.reveal.settleAngThresh;
+          if (settled && !w.ts.facing) {
+            w.ts.facing = performance.now(); // moment the ball came fully to rest, facing the viewer
           }
-          // Publish only after the ball has RESTED + faced the camera for a short
-          // beat, so the viewer clearly sees the physical ball before the number.
+          // Publish only after the ball has held that fully-settled pose for a short
+          // beat, so the viewer clearly sees the physical ball stop before the number.
           const held = w?.ts.facing && (performance.now() - w.ts.facing) / 1000 >= CONFIG.reveal.hold;
-          if (w && w.parked && (held || this.timer > CONFIG.reveal.maxWait)) this._reveal();
+          if (w && w.parked && ((settled && held) || this.timer > CONFIG.reveal.maxWait)) this._reveal();
         }
         if (this._revealed && (this.timer - this._revealAt) > CONFIG.draw.displaySeconds) this._afterDisplay();
         break;

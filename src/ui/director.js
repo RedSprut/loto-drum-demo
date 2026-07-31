@@ -42,10 +42,25 @@ export class CameraDirector {
     this._look0 = new THREE.Vector3();
     this._t = new THREE.Vector3();
     this._fitCam = new THREE.PerspectiveCamera(camera.fov, 1, camera.near, camera.far);
+    this.rackBounds = null;   // world-space Box3 of the lower rack (set from main)
+    this._rackCorners = null; // its extreme corners (indices 0..3 = bottom edge)
   }
 
-  /** NDC-y of a world point for a trial camera (look pan `oy`, distance `dist`). */
-  _ndcY(point, look0, dir, dist, oy, aspect) {
+  /** Cache the rack bounding box + the extreme corners used for the final fit. */
+  setRackBounds(box) {
+    this.rackBounds = box || null;
+    this._rackCorners = null;
+    if (!box) return;
+    const { min, max } = box;
+    this._rackCorners = [
+      new THREE.Vector3(min.x, min.y, max.z), new THREE.Vector3(max.x, min.y, max.z), // bottom front L/R
+      new THREE.Vector3(min.x, min.y, min.z), new THREE.Vector3(max.x, min.y, min.z), // bottom back  L/R
+      new THREE.Vector3(min.x, max.y, max.z), new THREE.Vector3(max.x, max.y, max.z), // top    front L/R
+    ];
+  }
+
+  /** NDC of a world point for a trial camera (look pan `oy`, distance `dist`). */
+  _project(point, look0, dir, dist, oy, aspect) {
     const cam = this._fitCam;
     cam.fov = this.camera.fov; cam.aspect = aspect;
     cam.near = this.camera.near; cam.far = this.camera.far;
@@ -53,7 +68,34 @@ export class CameraDirector {
     const P = this._cp.copy(dir).multiplyScalar(dist).add(L);
     cam.position.copy(P); cam.up.set(0, 1, 0); cam.lookAt(L);
     cam.updateMatrixWorld(true); cam.updateProjectionMatrix();
-    return this._ndc.copy(point).project(cam).y;
+    return this._ndc.copy(point).project(cam);
+  }
+
+  /** NDC-y of a world point for a trial camera (look pan `oy`, distance `dist`). */
+  _ndcY(point, look0, dir, dist, oy, aspect) {
+    return this._project(point, look0, dir, dist, oy, aspect).y;
+  }
+
+  /** FINAL frame only: one small, purely frontal pull-back so the whole lower rack
+   *  (all parked balls — first and last included, plus the end seats) fits inside a
+   *  safe area. Keeps the base composition's target/direction EXACTLY (never sideways,
+   *  never rotated) and only grows the distance. Receding along `dir` moves every
+   *  rack corner monotonically toward frame centre, so horizontal cropping is fixed
+   *  while the bottom safe margin only widens. If the rack already fits (narrow
+   *  games / wide desktop frames) the distance is unchanged — zero motion. */
+  _fitRack(look0, dir, aspect) {
+    const cs = this._rackCorners;
+    if (!cs) return;
+    const xLim = 1 - 2 * 0.05;               // ~5% horizontal safe margin each side
+    const oy = this.look.y - look0.y;        // keep the base vertical anchor exactly
+    let dist = this.pos.distanceTo(this.look); // base distance — only ever grows
+    for (let iter = 0; iter < 40; iter++) {
+      let over = 0;
+      for (const c of cs) over = Math.max(over, Math.abs(this._project(c, look0, dir, dist, oy, aspect).x) - xLim);
+      if (over <= 0.002) break;
+      dist *= 1 + Math.min(0.12, over * 0.5 + 0.01); // back off just enough
+    }
+    this.pos.copy(dir).multiplyScalar(dist).add(this.look);
   }
 
   /** Landscape: smallest distance (≥ start) so both fit points stay in the safe
@@ -111,6 +153,9 @@ export class CameraDirector {
       const dist = this._fitDistance(this._look0, this._dir, aspect, this.pos.distanceTo(this.look), 0.045, 0.06);
       this.pos.copy(this._dir).multiplyScalar(dist).add(this.look);
     }
+    // FINAL frame: once the draw is COMPLETE, apply one small frontal pull-back so
+    // every ball in the lower rack is fully framed (computed fit, not a fixed zoom).
+    if (state === State.COMPLETE) this._fitRack(this._look0, this._dir, aspect);
     this.shot = exiting ? 'BALL_EXIT' : 'MAIN';
 
     // During the exit, the BALL is the subject: zoom IN toward it (never OUT) and

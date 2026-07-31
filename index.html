@@ -10,6 +10,29 @@
 <title>Loto Drum — 3D Physics Demo</title>
 <link rel="stylesheet" href="./styles.css">
 
+<!-- This is a STANDALONE static page and registers no service worker of its own.
+     But when it is served from the same origin as the main app (locally from the
+     repo root, or on Pages under the app's scope), the app's service worker —
+     registered with scope './' — can control this page and serve stale/incompatible
+     cached files, so the ES-module graph never resolves and the boot screen hangs
+     on "Loading…". If we detect such a controller, evict every registration + cache
+     and reload ONCE (guarded so it can never loop) to boot from the network clean. -->
+<script>
+  (function () {
+    try {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller
+          && !sessionStorage.getItem('dd-sw-evicted')) {
+        sessionStorage.setItem('dd-sw-evicted', '1');
+        navigator.serviceWorker.getRegistrations()
+          .then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })
+          .then(function () { return window.caches ? caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); }) : null; })
+          .then(function () { location.reload(); })
+          .catch(function () { location.reload(); });
+      }
+    } catch (e) { /* no SW support → nothing to evict */ }
+  })();
+</script>
+
 <!-- Self-hosted dependencies (no CDN, no build step, no changes to the host app).
      Everything resolves same-origin so it behaves identically in every browser
      and on GitHub Pages. Rapier's WASM is inlined in vendor/rapier3d-compat.js. -->

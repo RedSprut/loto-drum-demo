@@ -9,9 +9,12 @@
  * this file holds only the physics/visual tunables.
  */
 export const CONFIG = {
-  // The top-UI number is revealed ONLY after the physical ball is in its rack
-  // slot, settled and turned so its number faces the viewer.
-  reveal: { facingDot: 0.985, maxWait: 2.8, hold: 0.35 },
+  // The top-UI number is revealed ONLY after the physical ball has fully settled
+  // in its rack slot (BALL_EXIT complete): in-rack, parked, no residual linear or
+  // angular motion, and turned so its number faces the viewer. The camera keeps
+  // following the ball until this whole predicate holds — the number never appears
+  // before the physical ball has come to a complete, readable stop.
+  reveal: { facingDot: 0.985, maxWait: 3.2, hold: 0.35, settleLinThresh: 0.06, settleAngThresh: 0.25 },
 
   draw: {
     startupSeconds: 1.0,  // rotor spins up (mixer already running)
@@ -92,9 +95,13 @@ export const CONFIG = {
       { depth: -0.5, tilt: 7 },
       { depth: 0.46, tilt: -14 },
     ],
-    // Small secondary mixer on a tilted axis near the back — breaks planar flow.
+    // Small secondary mixer near the back. It spins on the SAME strictly-horizontal
+    // axis as the primary (X), just offset and counter-rotating, so — like the
+    // primary — every arm rides a fixed vertical circle and never leans/tilts
+    // sideways. (Its mesh and collider come from one kinematic body, so they always
+    // share the exact same transform.)
     secondary: {
-      axis: [0.18, 0.72, 0.67],
+      axis: [1, 0, 0],
       center: [0.0, 0.15, -0.7],
       armCount: 3,
       armRadius: 0.04,

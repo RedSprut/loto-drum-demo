@@ -138,6 +138,23 @@ export class Exit {
     return (this.slots[groupIndex] && this.slots[groupIndex][idx]) || new THREE.Vector3(0, CONFIG.exit.rack.y, CONFIG.exit.rack.z);
   }
 
+  /** World-space bounding box of the whole lower rack — every seat's parked ball
+   *  (centre ± ball radius) plus the rack plate depth (z ± 0.33). Used by the
+   *  camera director to compute the minimal final pull-back that keeps ALL bottom
+   *  balls (first and last included) fully inside the safe area. Null until built. */
+  rackBox() {
+    if (!this.slots.length) return null;
+    const ballR = CONFIG.ball.radius;
+    const box = new THREE.Box3();
+    for (const group of this.slots) {
+      for (const s of group) {
+        box.expandByPoint(new THREE.Vector3(s.x - ballR, s.y - ballR, s.z - 0.33));
+        box.expandByPoint(new THREE.Vector3(s.x + ballR, s.y + ballR, s.z + 0.33));
+      }
+    }
+    return box;
+  }
+
   /** Continuous curve: capture point → tube → chute → the target rack slot. */
   buildPath(startVec, groupIndex, idx) {
     const pts = [startVec.clone()];

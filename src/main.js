@@ -60,7 +60,7 @@ async function main() {
 
   let hud;
   const draw = new DrawController({ balls, drum, rotor, exit, camera: engine.camera }, {
-    onLayout: (profile) => hud?.buildLayout(profile),
+    onLayout: (profile) => { hud?.buildLayout(profile); director.setRackBounds(exit.rackBox()); },
     onState: (s, w) => hud?.setPhase(s, w),
     onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
     onDone: () => { setTimeout(() => hud?.sortResults(true), 350); }, // pause, then sort ascending
@@ -109,8 +109,22 @@ async function main() {
     balls.updateTrackers(dt); // per-ball motion history for the anti-stall system
     balls.sync();
     balls.updateFacing(dt, engine.camera); // turn parked winners' numbers to camera (deterministic, in-step)
-    if (draw.winner && (draw.state === State.TRANSIT || draw.state === State.DISPLAY)) focus.copy(draw.winner.mesh.position);
-    else focus.set(0, 0, 0);
+    // Winner MESH speeds (finite-difference), so the draw controller can gate the
+    // reveal on the ball having genuinely stopped — no residual roll or spin —
+    // before the top-UI number is allowed to appear (BALL_EXIT completion).
+    if (draw.winner && (draw.state === State.TRANSIT || draw.state === State.DISPLAY)) {
+      const w = draw.winner;
+      focus.copy(w.mesh.position);
+      if (w._lp) {
+        w._linSpeed = w.mesh.position.distanceTo(w._lp) / dt;
+        const d = Math.min(1, Math.abs(w.mesh.quaternion.dot(w._lq)));
+        w._angSpeed = (2 * Math.acos(d)) / dt;
+      }
+      (w._lp ||= new THREE.Vector3()).copy(w.mesh.position);
+      (w._lq ||= new THREE.Quaternion()).copy(w.mesh.quaternion);
+    } else {
+      focus.set(0, 0, 0);
+    }
   }
 
   if (params.get('shot')) { runShotHarness(params.get('shot')); return; }
