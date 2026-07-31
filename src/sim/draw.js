@@ -48,6 +48,10 @@ export class DrawController {
     this.timer = 0;
     this.winner = null;
     this._path = null; this._u = 0; this._tmp = new THREE.Vector3();
+    // Rolling of the drawn ball along the exit path (sphere must roll, not slide):
+    // an accumulated orientation + per-step delta derived from the travel distance.
+    this._rollQ = new THREE.Quaternion(); this._qDelta = new THREE.Quaternion();
+    this._axis = new THREE.Vector3(); this._prevP = new THREE.Vector3();
     this._revealed = false; this._revealAt = 0; this._debug = false;
     this.mixActivity = 1; this.stalledFor = 0; this._warned = false;
     this._phaseIdx = 0; this._phaseTimer = 0;
@@ -255,6 +259,10 @@ export class DrawController {
     this._tmp.set(s.x, s.y, s.z);
     this._path = this.exit.buildPath(this._tmp, this.groupIndex, this.idxInGroup);
     this._u = 0;
+    // Seed the rolling accumulator from the ball's live orientation + start point.
+    const r0 = winner.body.rotation();
+    this._rollQ.set(r0.x, r0.y, r0.z, r0.w);
+    this._prevP.copy(this._tmp);
 
     this.balls.assertConservation();
     this._set(State.TRANSIT); // top UI stays "Выбор шара…" (no chip)
@@ -264,6 +272,22 @@ export class DrawController {
     this._u = Math.min(1, this._u + dt / TRANSIT_SECONDS);
     const p = this._path.getPoint(smoothstep(this._u), this._tmp);
     this.winner.body.setNextKinematicTranslation({ x: p.x, y: p.y, z: p.z });
+    // Roll the ball so its spin matches how far it travelled: angle = distance / r
+    // about the horizontal axis perpendicular to the direction of travel (up × dir).
+    // Rolling without slipping — no scripted spin, just kinematics from the path.
+    const dx = p.x - this._prevP.x, dy = p.y - this._prevP.y, dz = p.z - this._prevP.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist > 1e-6) {
+      const inv = 1 / dist;
+      let axx = dz * inv, axz = -dx * inv;        // up × dir, with up = (0,1,0)
+      const al = Math.hypot(axx, axz);            // ~0 when travelling straight up the tube
+      if (al > 1e-4) {
+        this._qDelta.setFromAxisAngle(this._axis.set(axx / al, 0, axz / al), dist / CONFIG.ball.radius);
+        this._rollQ.premultiply(this._qDelta);
+        this.winner.body.setNextKinematicRotation({ x: this._rollQ.x, y: this._rollQ.y, z: this._rollQ.z, w: this._rollQ.w });
+      }
+      this._prevP.set(p.x, p.y, p.z);
+    }
     if (this._u > 0.55 && !this.winner.ts.chute) this.winner.ts.chute = performance.now();
     if (this._u >= 1) {
       this.winner.mesh.position.copy(p);  // freeze the mesh exactly in its slot

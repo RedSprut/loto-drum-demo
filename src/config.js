@@ -128,21 +128,21 @@ export const CONFIG = {
   // downdraft + swirl + 3D-noise turbulence that keeps the whole sphere volume
   // alive. Forces are in the same units as a ball's weight (≈ 1.0).
   air: {
-    lift: 1.05,     // peak central updraft (just over a ball's weight → it floats there)
-    coneR: 0.5,     // horizontal radius fraction where updraft → 0 (then downdraft)
+    lift: 3.2,      // peak central updraft (well over a ball's weight → lofts balls up through the whole volume)
+    coneR: 0.6,     // horizontal radius fraction where updraft → 0 (then downdraft)
     edgeDown: 0.2,  // small downdraft near the walls (don't pin balls to the lower wall)
-    topY: 1.3,      // updraft tapers to zero by this height
+    topY: 3.0,      // updraft stays positive high into the sphere so the top third keeps circulating
     swirl: 0.06,    // minimal so balls aren't centrifuged onto the wall
     edgeInward: 0.6, // steady inward pull that grows toward the wall (anti wall-hug)
     turb: 0.95,     // strong turbulence so every ball is constantly buffeted (air machine)
     turbScale: 0.85,
     turbTime: 0.9,
     // Per-ball anti-stall corrective forces (in ball-weight units) + trigger times.
-    bottomKick: 1.35, bottomT: 0.4,  // stuck low → strong lift + scatter
+    bottomKick: 1.7, bottomT: 0.35,  // stuck low → strong lift + scatter (launch back up through the volume)
     topPush: 1.2, topT: 0.4,         // hanging high → push down, let gravity return it
     wallPull: 2.2, wallT: 0.4,       // pinned to wall → hard inward pull, cut its swirl
     stillKick: 1.0, stillT: 0.3,     // barely moving → firm kick back into the flow
-    captureLiftScale: 0.55,          // reduce (not stop) the updraft while capturing
+    captureLiftScale: 0.38,          // reduce the (now stronger) updraft more while capturing, so a ball still settles to the throat cleanly and the draw stays fair
   },
 
   // Localized suction at the throat during CAPTURING: pulls whatever ball wanders

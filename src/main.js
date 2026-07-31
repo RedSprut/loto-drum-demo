@@ -15,6 +15,7 @@ import { QualityManager } from './engine/quality.js';
 import { RenderEngine } from './engine/renderer.js';
 import { initRapier, PhysicsWorld } from './engine/physics.js';
 import { buildStudio } from './scene/studio.js';
+import { StudioBranding } from './scene/branding.js';
 import { Drum } from './scene/drum.js';
 import { Rotor } from './scene/rotor.js';
 import { Balls } from './scene/balls.js';
@@ -49,6 +50,7 @@ async function main() {
 
   // ── Scene ──
   buildStudio(engine.scene);
+  const branding = new StudioBranding(engine.scene);
   const drum = new Drum(engine.scene, physics);
   const rotor = new Rotor(engine.scene, physics, { debug: debugPhysics });
   const balls = new Balls(engine.scene, physics, quality.preset.ballSeg);
@@ -60,7 +62,7 @@ async function main() {
 
   let hud;
   const draw = new DrawController({ balls, drum, rotor, exit, camera: engine.camera }, {
-    onLayout: (profile) => { hud?.buildLayout(profile); director.setRackBounds(exit.rackBox()); },
+    onLayout: (profile) => { hud?.buildLayout(profile); director.setRackBounds(exit.rackBox()); branding.setGame(profile); },
     onState: (s, w) => hud?.setPhase(s, w),
     onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
     onDone: () => { setTimeout(() => hud?.sortResults(true), 350); }, // pause, then sort ascending
@@ -79,12 +81,12 @@ async function main() {
   draw.loadProfile(GAME_PROFILES[profileKey]);
 
   quality.onChange((preset) => engine.applyPreset(preset));
-  const onResize = () => engine.resize();
+  const onResize = () => { engine.resize(); branding.setLayout((engine.camera.aspect || 1.6) < 1.05); };
   window.addEventListener('resize', onResize);
   window.addEventListener('orientationchange', () => setTimeout(onResize, 250));
   window.visualViewport?.addEventListener('resize', onResize);
   window.visualViewport?.addEventListener('scroll', onResize);
-  engine.resize();
+  onResize();
   if (boot) { boot.dataset.done = '1'; boot.classList.add('hidden'); }
 
   // headless=new doesn't composite the WebGL canvas into --screenshot, so blit
