@@ -13,6 +13,13 @@
   --safe-b: env(safe-area-inset-bottom, 0px);
   --safe-l: env(safe-area-inset-left, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
+  /* Per-game theme tokens (set at runtime by ui/theme.js). Premium-gold defaults. */
+  --g-primary: #b9852f;
+  --g-secondary: #7a5417;
+  --g-accent: #4a3210;
+  --g-glow: rgba(233,214,156,.5);
+  --g-ball-main: #e9b44c;
+  --g-ball-bonus: #e23b4e;
 }
 
 * { box-sizing: border-box; }
@@ -70,9 +77,26 @@ html, body {
 }
 .dd-counts[data-bad="1"] { color: #ff6b6b; border-color: #ff6b6b; background: rgba(60,10,10,.75); }
 
+/* Themed per-game header (game name), safe-area aware, above the results row. */
+.dd-gamehead {
+  position: absolute; top: calc(7px + var(--safe-t)); left: 50%; transform: translateX(-50%);
+  z-index: 21; pointer-events: none; max-width: 86vw;
+  padding: 5px 16px; border-radius: 999px;
+  font-family: "Unbounded", "Helvetica Neue", sans-serif; font-weight: 800;
+  font-size: 13px; letter-spacing: .4px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; text-align: center; color: #fff;
+  background: linear-gradient(135deg, var(--g-primary), var(--g-secondary));
+  border: 1px solid color-mix(in srgb, var(--g-accent) 60%, #fff 12%);
+  box-shadow: 0 6px 20px var(--g-glow), inset 0 1px 1px rgba(255,255,255,.28);
+  text-shadow: 0 1px 3px rgba(0,0,0,.45);
+}
+.dd-gamehead:empty { display: none; }
+/* On embed the app overlay owns a back button top-left — nudge the header clear. */
+body.dd-embed .dd-gamehead { transform: translateX(calc(-50% + 18px)); }
+
 .dd-results {
   --chip: 38px;
-  position: absolute; top: calc(10px + var(--safe-t)); left: 50%; transform: translateX(-50%);
+  position: absolute; top: calc(42px + var(--safe-t)); left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 6px; align-items: center; justify-content: center;
   width: 100%; max-width: 96vw; pointer-events: none;
 }
@@ -106,10 +130,11 @@ html, body {
   position: absolute; left: 50%; transform: translateX(-50%);
   bottom: calc(22px + var(--safe-b));
   font: inherit; font-size: 17px; font-weight: 800; letter-spacing: .2px;
-  color: #2a1c05; border: none; border-radius: 16px;
+  color: #fff; border: 1px solid color-mix(in srgb, var(--g-glow) 70%, #fff 20%); border-radius: 16px;
   padding: 15px 30px; min-height: 52px; min-width: 220px; cursor: pointer;
-  background: linear-gradient(160deg, #f5cf7b, #e9b44c 55%, #b07e1f);
-  box-shadow: 0 10px 28px rgba(180,120,20,.4);
+  background: linear-gradient(160deg, var(--g-primary), var(--g-secondary) 55%, var(--g-accent));
+  box-shadow: 0 10px 28px var(--g-glow);
+  text-shadow: 0 1px 3px rgba(0,0,0,.4);
   transition: transform .12s ease, filter .12s ease;
 }
 .dd-primary:hover { filter: brightness(1.08); }

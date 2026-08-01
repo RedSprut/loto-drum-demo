@@ -61,3 +61,30 @@ export const CANONICAL_GAMES = [
 export const CANONICAL_GAME_IDS = CANONICAL_GAMES.map((g) => g.id);
 
 export const DEFAULT_GAME_ID = 'eurojackpot';
+
+/**
+ * Per-game theme tokens — the SAME palette the main app uses (index.html
+ * body[data-game=…] tokens --hdr-a/-b/-c, --game-glow, --gm, --gb). Keyed by the
+ * canonical game id, so the drum is themed identically whether it runs standalone
+ * or embedded. When embedded, the app passes the live tokens as URL params which
+ * override these (see main.js applyTheme). Each game is recognisable by its palette
+ * while sharing one premium system.
+ *   primary/secondary/accent → header→footer gradient + accents
+ *   glow → decorative glow    ballMain/ballBonus → result-chip colours
+ */
+export const GAME_THEMES = {
+  lotto:              { primary: '#B81B44', secondary: '#7A0E2B', accent: '#4A0919', glow: 'rgba(184,27,68,.5)',  ballMain: '#CC2060', ballBonus: '#F4F0E8' },
+  vikinglotto:        { primary: '#2A4BD8', secondary: '#1E7FC8', accent: '#0FBFA6', glow: 'rgba(30,110,200,.5)', ballMain: '#2146C7', ballBonus: '#111B45' },
+  eurojackpot:        { primary: '#0E7A50', secondary: '#0E4B4E', accent: '#123A44', glow: 'rgba(16,120,80,.5)',  ballMain: '#F3C316', ballBonus: '#194F90' },
+  powerball:          { primary: '#B5162B', secondary: '#7A1250', accent: '#12327E', glow: 'rgba(120,30,110,.5)', ballMain: '#F6F7F8', ballBonus: '#D71E28' },
+  megaMillions:       { primary: '#C09018', secondary: '#6A5A2A', accent: '#124A7E', glow: 'rgba(160,120,40,.5)', ballMain: '#F7F7F5', ballBonus: '#F2B705' },
+  euroMillions:       { primary: '#123C8E', secondary: '#3A2A8E', accent: '#6C1E8E', glow: 'rgba(80,40,140,.5)',  ballMain: '#17499E', ballBonus: '#F1C40F' },
+  superEnalotto:      { primary: '#0E7A3C', secondary: '#6A6020', accent: '#B5162B', glow: 'rgba(60,110,50,.5)',  ballMain: '#098B4A', ballBonus: '#D42136' },
+  lottoMax:           { primary: '#C4182F', secondary: '#8A1030', accent: '#5E0C22', glow: 'rgba(180,24,45,.5)',  ballMain: '#1B4FB8', ballBonus: '#D41F3A' },
+  powerballAustralia: { primary: '#5A2AC8', secondary: '#8A2AB8', accent: '#B5169E', glow: 'rgba(140,42,160,.5)', ballMain: '#2548BA', ballBonus: '#7B239B' },
+};
+
+/** Theme for a game id (falls back to the default game's theme). */
+export function themeOf(id) {
+  return GAME_THEMES[id] || GAME_THEMES[DEFAULT_GAME_ID];
+}

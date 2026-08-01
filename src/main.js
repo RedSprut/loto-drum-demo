@@ -23,17 +23,32 @@ import { Exit } from './scene/exit.js';
 import { DrawController, State, getActiveForcePolicy } from './sim/draw.js';
 import { CameraDirector } from './ui/director.js';
 import { HUD } from './ui/hud.js';
+import { resolveTheme, applyTheme } from './ui/theme.js';
 
 const params = new URLSearchParams(location.search);
 const boot = document.getElementById('boot');
-const fail = (msg) => { if (boot && !boot.dataset.done) { boot.textContent = msg; boot.classList.add('error'); } };
-window.addEventListener('error', (e) => fail('Error: ' + (e.message || e.error)));
-window.addEventListener('unhandledrejection', (e) => fail('Rejection: ' + (e.reason?.message || e.reason)));
+const fail = (msg, retry = false) => {
+  if (!boot || boot.dataset.done) return;
+  boot.textContent = msg;
+  boot.classList.add('error');
+  console.error('DEMO_DRUM_FAIL: ' + msg);
+  if (retry) { boot.style.cursor = 'pointer'; boot.onclick = () => location.reload(); }
+};
+window.addEventListener('error', (e) => fail('Error: ' + (e.message || e.error) + ' — tap to retry.', true));
+window.addEventListener('unhandledrejection', (e) => fail('Rejection: ' + (e.reason?.message || e.reason) + ' — tap to retry.', true));
 
 async function main() {
   const canvas = document.getElementById('stage');
   const debug = params.get('debug') === '1';
   const debugPhysics = params.get('debugPhysics') === '1';
+  const embed = params.get('embed') === '1';
+  if (embed) document.body.classList.add('dd-embed');
+
+  // Loading watchdog: never leave the boot screen spinning forever — if init hasn't
+  // finished in time, surface a clear, retryable error instead of a silent hang.
+  const watchdog = setTimeout(() => {
+    if (boot && !boot.dataset.done) fail('Timed out starting the 3D machine. Tap to retry.', true);
+  }, 20000);
 
   // Startup schema validation: refuse to run with a mis-configured lottery rule
   // (wrong range/counts, drawing more than exist, rack/queue mismatch, …), and
@@ -68,7 +83,13 @@ async function main() {
 
   let hud;
   const draw = new DrawController({ balls, drum, rotor, exit, camera: engine.camera }, {
-    onLayout: (profile) => { hud?.buildLayout(profile); director.setRackBounds(exit.rackBox()); branding.setGame(profile); },
+    onLayout: (profile) => {
+      applyTheme(resolveTheme(profile.id, params));       // per-game palette (param-overridable when embedded)
+      hud?.buildLayout(profile);
+      hud?.setGameName(profile.name || profile.label);
+      director.setRackBounds(exit.rackBox());
+      branding.setGame(profile);
+    },
     onState: (s, w) => hud?.setPhase(s, w),
     onDraw: (value, poolId, results) => { hud?.setResults(results); hud?.setPhase(draw.state, value); },
     onDone: () => { setTimeout(() => hud?.sortResults(true), 350); }, // pause, then sort ascending
@@ -93,6 +114,7 @@ async function main() {
   window.visualViewport?.addEventListener('resize', onResize);
   window.visualViewport?.addEventListener('scroll', onResize);
   onResize();
+  clearTimeout(watchdog);
   if (boot) { boot.dataset.done = '1'; boot.classList.add('hidden'); }
 
   // headless=new doesn't composite the WebGL canvas into --screenshot, so blit

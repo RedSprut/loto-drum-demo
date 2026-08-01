@@ -20,7 +20,10 @@
 <script>
   (function () {
     try {
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller
+      // When EMBEDDED inside the main app (iframe / ?embed=1), the app owns the
+      // service worker — never touch it here, or we'd unregister the app's SW.
+      var embedded = window.self !== window.top || /[?&]embed=1\b/.test(location.search);
+      if (!embedded && 'serviceWorker' in navigator && navigator.serviceWorker.controller
           && !sessionStorage.getItem('dd-sw-evicted')) {
         sessionStorage.setItem('dd-sw-evicted', '1');
         navigator.serviceWorker.getRegistrations()

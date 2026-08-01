@@ -7,6 +7,7 @@
  * Nothing here touches the drum, the camera, physics or the UI.
  */
 import * as THREE from 'three';
+import { themeOf } from '../registry.js';
 
 /** Derive a clean wordmark ("EUROJACKPOT", "NORSK LOTTO") from a profile label like
  *  "Eurojackpot (5/50 + 2)" or "Norsk Lotto — 7/34 + 1 tilleggstall". */
@@ -77,8 +78,9 @@ export class StudioBranding {
     const brand = brandOf(profile?.label);
     if (brand === this.brand) return;
     this.brand = brand;
+    const accent = themeOf(profile?.id).primary; // per-game banner accent/glow
     this._bannerTex?.dispose();
-    this._bannerTex = bannerTexture(brand, '#caa85f');
+    this._bannerTex = bannerTexture(brand, accent);
     for (const b of this.banners) { b.material.map = this._bannerTex; b.material.needsUpdate = true; }
   }
 

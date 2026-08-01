@@ -11,7 +11,7 @@
  * Pool fields: { id, min, max, drawCount, colorSet,
  *                strategy? ('same-main-pool' | 'separate-pool') }
  */
-import { CANONICAL_GAMES, CANONICAL_GAME_IDS, DEFAULT_GAME_ID } from './registry.js';
+import { CANONICAL_GAMES, CANONICAL_GAME_IDS, DEFAULT_GAME_ID, GAME_THEMES } from './registry.js';
 
 const M = (min, max, drawCount) => ({ id: 'main', min, max, drawCount, colorSet: 'multicolor' });
 const group = (pool, label, slotCount) => ({ pool, label, slotCount });
@@ -143,5 +143,6 @@ export function assertRegistryConsistency(profiles = GAME_PROFILES, canonicalIds
   for (const id of canonicalIds) if (!setD.has(id)) errs.push(`missing drum profile for canonical game "${id}"`);
   for (const id of drumIds) if (!setC.has(id)) errs.push(`extra drum profile "${id}" not in canonical registry`);
   if (drumIds.length !== canonicalIds.length) errs.push(`drum profile count ${drumIds.length} ≠ canonical ${canonicalIds.length}`);
+  for (const id of canonicalIds) if (!GAME_THEMES[id]) errs.push(`missing theme tokens for game "${id}"`);
   if (errs.length) throw new Error('Drum ↔ canonical registry mismatch:\n  ' + errs.join('\n  '));
 }

@@ -8,6 +8,24 @@
 import { State } from '../sim/draw.js';
 import { GAME_PROFILES } from '../games.js';
 
+// Small colour helpers so result chips can take each game's ball colour while
+// staying legible (contrast-picked text, premium radial sheen).
+function hexRGB(h) {
+  h = String(h || '').trim().replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h || '0', 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function shade([r, g, b], f) { // f>0 lighten toward white, f<0 darken toward black
+  const k = f < 0 ? 0 : 255, t = Math.abs(f);
+  return `rgb(${Math.round(r + (k - r) * t)},${Math.round(g + (k - g) * t)},${Math.round(b + (k - b) * t)})`;
+}
+function chipStyle(hex) {
+  const rgb = hexRGB(hex);
+  const lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+  return { bg: `radial-gradient(120% 120% at 30% 25%, ${shade(rgb, 0.55)}, ${hex} 60%, ${shade(rgb, -0.4)})`, fg: lum > 0.62 ? '#2a1c05' : '#fff' };
+}
+
 export class HUD {
   constructor(root, handlers, { debug = false, profileKey = '' } = {}) {
     this.h = handlers; // {onStart, onReset, onQuality, onProfile}
@@ -18,6 +36,12 @@ export class HUD {
   }
 
   _build(profileKey) {
+    // Themed game-name header (per-game gradient), safe-area aware, above the results.
+    this.gameHead = document.createElement('div');
+    this.gameHead.className = 'dd-gamehead';
+    this.gameHead.setAttribute('role', 'heading');
+    this.gameHead.setAttribute('aria-level', '1');
+
     this.results = document.createElement('div');
     this.results.className = 'dd-results';
 
@@ -57,7 +81,7 @@ export class HUD {
     this.panel.querySelector('[data-q]').onchange = (e) => this.h.onQuality?.(e.target.value);
     this.panel.querySelector('[data-reset]').onclick = () => { this.panel.classList.add('hidden'); this.h.onReset?.(); };
 
-    this.root.append(this.results, this.startBtn, this.setBtn, this.panel);
+    this.root.append(this.gameHead, this.results, this.startBtn, this.setBtn, this.panel);
 
     // Keep the result chips fitting one line as the viewport changes.
     const onResize = () => this._sizeChips();
@@ -90,6 +114,9 @@ export class HUD {
     this.counts.dataset.bad = bad ? '1' : '0';
   }
 
+  /** Set the game name shown in the themed header. */
+  setGameName(name) { if (this.gameHead) this.gameHead.textContent = name || ''; }
+
   /** Rebuild the results row for a profile: main group on its own single line,
    *  each bonus group stacked BELOW on its own line (hidden until it has balls). */
   buildLayout(profile) {
@@ -114,13 +141,18 @@ export class HUD {
 
   /** Fill chips; bonus rows stay hidden until they actually have a ball. */
   setResults(resultsByPool) {
+    const cs = getComputedStyle(document.documentElement);
+    const mainStyle = chipStyle(cs.getPropertyValue('--g-ball-main').trim() || '#e9b44c');
+    const bonusStyle = chipStyle(cs.getPropertyValue('--g-ball-bonus').trim() || '#e23b4e');
     for (const [poolId, group] of Object.entries(this.groups)) {
       group.ballsEl.innerHTML = '';
       const vals = resultsByPool[poolId] || [];
+      const st = group.bonus ? bonusStyle : mainStyle;
       for (const v of vals) {
         const chip = document.createElement('div');
         chip.className = `dd-chip pop${group.bonus ? ' bonus' : ''}`;
         chip.textContent = v;
+        chip.style.background = st.bg; chip.style.color = st.fg;
         group.ballsEl.appendChild(chip);
       }
       if (group.bonus) group.wrap.classList.toggle('empty', vals.length === 0);
