@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { GAME_PROFILES, DEFAULT_PROFILE, assertValidProfiles, validateProfile, poolSize, totalDrawnOf } from './games.js';
+import { GAME_PROFILES, DEFAULT_PROFILE, assertValidProfiles, assertRegistryConsistency, validateProfile, poolSize, totalDrawnOf } from './games.js';
 import { FrameStats } from './util/stats.js';
 import { QualityManager } from './engine/quality.js';
 import { RenderEngine } from './engine/renderer.js';
@@ -36,8 +36,10 @@ async function main() {
   const debugPhysics = params.get('debugPhysics') === '1';
 
   // Startup schema validation: refuse to run with a mis-configured lottery rule
-  // (wrong range/counts, drawing more than exist, rack/queue mismatch, …).
+  // (wrong range/counts, drawing more than exist, rack/queue mismatch, …), and
+  // assert the drum's public game set equals the canonical registry exactly.
   assertValidProfiles();
+  assertRegistryConsistency();
 
   try { await initRapier(); }
   catch (e) { fail('Failed to initialise physics engine.'); throw e; }

@@ -117,8 +117,8 @@ export class CameraDirector {
   /** Portrait: the drum dominates. Come as CLOSE as allowed (drum may spill past
    *  the sides), keep the glass top and the tray in frame, and anchor the tray to
    *  the bottom so it sits right above the button. */
-  _framePortrait(look0, dir, aspect) {
-    const topLim = 1 - 2 * 0.035, botLim = -1 + 2 * 0.045;
+  _framePortrait(look0, dir, aspect, band = 0) {
+    const topLim = 1 - 2 * 0.035, botLim = -1 + 2 * (0.045 + band);
     const vHalfTan = Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5));
     // Closest allowed distance (drum up to PORTRAIT_MAX_FILL× the frame width).
     let dist = (DRUM_HALF_W / PORTRAIT_MAX_FILL) / (vHalfTan * aspect);
@@ -145,12 +145,16 @@ export class CameraDirector {
     this.look.set(...this.shots.MAIN.target);
     const aspect = this.camera.aspect || 1.6;
     const portrait = aspect < 1.05;
+    // Fraction of the (now full-height) frame reserved at the bottom for the button
+    // band, so the tray is kept above the controls even though the studio renders
+    // all the way down. Set by the renderer each resize.
+    const band = this.camera.userData?.bandFrac || 0;
     this._dir.copy(this.pos).sub(this.look).normalize();
     this._look0.copy(this.look);
     if (portrait) {
-      this._framePortrait(this._look0, this._dir, aspect);
+      this._framePortrait(this._look0, this._dir, aspect, band);
     } else {
-      const dist = this._fitDistance(this._look0, this._dir, aspect, this.pos.distanceTo(this.look), 0.045, 0.06);
+      const dist = this._fitDistance(this._look0, this._dir, aspect, this.pos.distanceTo(this.look), 0.045, 0.06 + band);
       this.pos.copy(this._dir).multiplyScalar(dist).add(this.look);
     }
     // FINAL frame: once the draw is COMPLETE, apply one small frontal pull-back so

@@ -135,14 +135,15 @@ export class RenderEngine {
     const q = new URLSearchParams(location.search);
     if (q.has('vw')) w = parseInt(q.get('vw'), 10);
     if (q.has('vh')) vh = parseInt(q.get('vh'), 10);
-    // Reserve an opaque bottom band for the status/button/gear so the 3D canvas
-    // (and therefore the physical tray at its bottom edge) never sits under the
-    // controls. The canvas is anchored top-left, so the band is the empty strip
-    // below it. Vertical FOV is unchanged → the tray is not cropped, only the
-    // overall frame gets a little shorter on tight screens.
+    // The studio renders to the FULL viewport height so the background continues to
+    // the very bottom — no flat "basement" strip under the scene. The status/button/
+    // gear band is instead reserved INSIDE the camera framing (director reads
+    // camera.userData.bandFrac), so the physical tray still sits just above the
+    // button while the studio floor fills the space behind the controls.
     const band = reservedBand(w, vh);
-    const h = Math.max(260, vh - band);
+    const h = Math.max(260, vh);
     document.documentElement.style.setProperty('--dd-band', `${band}px`);
+    this.camera.userData.bandFrac = Math.min(0.4, band / vh);
     const dpr = Math.min(window.devicePixelRatio || 1, this.preset.dpr);
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, true); // update CSS too so buffer + element match

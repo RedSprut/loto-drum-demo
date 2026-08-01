@@ -1,87 +1,50 @@
 /**
- * Data-driven game profiles. The machine reads a profile and adapts EVERYTHING:
- * loaded ball count, number ranges, main + bonus draw counts, bonus pool (same
- * drum or a separate reloaded set), bonus colour, rack slots, draw sequence and
- * the result UI. Adding a new lottery = adding a profile here; nothing in the
- * physics / renderer / UI needs to change.
+ * Game profiles — GENERATED from the canonical registry (registry.js), which is
+ * the single source of truth and mirrors the main app's 9 games. Do NOT hand-add
+ * a second independent list here; add games to registry.js so the drum and the app
+ * can never drift (scripts/audit-drum-games.mjs enforces they match).
  *
- * Pool fields: { id, min, max, drawCount, loadedBallCount?, colorSet,
+ * A profile drives EVERYTHING: loaded ball count, ranges, main + bonus draw counts,
+ * bonus strategy (same drum or a separate reloaded set), colour, rack slots, draw
+ * sequence and the result UI.
+ *
+ * Pool fields: { id, min, max, drawCount, colorSet,
  *                strategy? ('same-main-pool' | 'separate-pool') }
  */
+import { CANONICAL_GAMES, CANONICAL_GAME_IDS, DEFAULT_GAME_ID } from './registry.js';
 
 const M = (min, max, drawCount) => ({ id: 'main', min, max, drawCount, colorSet: 'multicolor' });
 const group = (pool, label, slotCount) => ({ pool, label, slotCount });
 
-export const GAME_PROFILES = {
-  eurojackpot: {
-    id: 'eurojackpot', label: 'Eurojackpot (5/50 + 2/12)',
-    mainPool: M(1, 50, 5),
-    bonusPools: [{ id: 'euro', label: 'Euro', min: 1, max: 12, drawCount: 2, colorSet: 'bonus-gold', strategy: 'separate-pool' }],
-    drawOrder: ['main', 'euro'],
-    resultLayout: { groups: [group('main', 'Основные', 5), group('euro', 'Euro', 2)] },
-  },
+/** Adapter: canonical registry entry → full drum profile. */
+function toProfile(g) {
+  const mainPool = { id: 'main', min: 1, max: g.main.max, drawCount: g.main.draw, colorSet: 'multicolor' };
+  const groups = [group('main', g.main.label, g.main.draw)];
+  const bonusPools = [];
+  const drawOrder = ['main'];
+  if (g.bonus) {
+    const b = g.bonus;
+    bonusPools.push({ id: b.poolId, label: b.label, min: 1, max: b.max, drawCount: b.draw, colorSet: b.colorSet, strategy: b.strategy });
+    drawOrder.push(b.poolId);
+    groups.push(group(b.poolId, b.label, b.draw));
+  }
+  return { id: g.id, label: g.label, name: g.name, country: g.country, mainPool, bonusPools, drawOrder, resultLayout: { groups } };
+}
 
-  euromillions: {
-    id: 'euromillions', label: 'EuroMillions (5/50 + 2/12)',
-    mainPool: M(1, 50, 5),
-    bonusPools: [{ id: 'stars', label: 'Звёзды', min: 1, max: 12, drawCount: 2, colorSet: 'bonus-gold', strategy: 'separate-pool' }],
-    drawOrder: ['main', 'stars'],
-    resultLayout: { groups: [group('main', 'Основные', 5), group('stars', 'Звёзды', 2)] },
-  },
+/** The 9 public game profiles, keyed by the main app's game id (registry order). */
+export const GAME_PROFILES = Object.fromEntries(CANONICAL_GAMES.map((g) => [g.id, toProfile(g)]));
 
-  powerball: {
-    id: 'powerball', label: 'Powerball (5/69 + 1/26)',
-    mainPool: M(1, 69, 5),
-    bonusPools: [{ id: 'power', label: 'Powerball', min: 1, max: 26, drawCount: 1, colorSet: 'bonus-red', strategy: 'separate-pool' }],
-    drawOrder: ['main', 'power'],
-    resultLayout: { groups: [group('main', 'Основные', 5), group('power', 'Powerball', 1)] },
-  },
-
-  megaMillions: {
-    id: 'megaMillions', label: 'Mega Millions (5/70 + 1/24)',
-    mainPool: M(1, 70, 5),
-    bonusPools: [{ id: 'mega', label: 'Mega', min: 1, max: 24, drawCount: 1, colorSet: 'bonus-gold', strategy: 'separate-pool' }],
-    drawOrder: ['main', 'mega'],
-    resultLayout: { groups: [group('main', 'Основные', 5), group('mega', 'Mega', 1)] },
-  },
-
-  vikinglotto: {
-    id: 'vikinglotto', label: 'Vikinglotto (6/48 + 1/5)',
-    mainPool: M(1, 48, 6),
-    bonusPools: [{ id: 'viking', label: 'Viking', min: 1, max: 5, drawCount: 1, colorSet: 'bonus-red', strategy: 'separate-pool' }],
-    drawOrder: ['main', 'viking'],
-    resultLayout: { groups: [group('main', 'Основные', 6), group('viking', 'Viking', 1)] },
-  },
-
-  // Norsk Lotto (Norsk Tipping): 7 main numbers from 1–34, then ONE additional
-  // number (tilleggstall) drawn from the SAME remaining balls — one 1–34 drum,
-  // exactly 34 physical balls, 8 drawn total. Verified against norsk-tipping.no.
-  norwegianLotto: {
-    id: 'norsk-lotto', label: 'Norsk Lotto — 7/34 + 1 tilleggstall', country: 'NO',
-    mainPool: M(1, 34, 7),
-    bonusPools: [{ id: 'tilleggstall', label: 'TILLEGGSTALL', min: 1, max: 34, drawCount: 1, colorSet: 'bonus-red', strategy: 'same-main-pool' }],
-    drawOrder: ['main', 'tilleggstall'],
-    resultLayout: { groups: [group('main', 'HOVEDTALL', 7), group('tilleggstall', 'TILLEGGSTALL', 1)] },
-  },
-
-  superenalotto: {
-    id: 'superenalotto', label: 'SuperEnalotto (6/90 + Jolly)',
-    mainPool: M(1, 90, 6),
-    bonusPools: [{ id: 'jolly', label: 'Jolly', min: 1, max: 90, drawCount: 1, colorSet: 'bonus-red', strategy: 'same-main-pool' }],
-    drawOrder: ['main', 'jolly'],
-    resultLayout: { groups: [group('main', 'Основные', 6), group('jolly', 'Jolly', 1)] },
-  },
-
+/** Inactive/internal profiles — kept as code but NEVER shown in the public selector
+ *  (not part of the main app's current game set). */
+export const INACTIVE_PROFILES = {
   italianLotto: {
-    id: 'italian-lotto', label: 'Lotto Italia (5/90)',
-    mainPool: M(1, 90, 5),
-    bonusPools: [],
-    drawOrder: ['main'],
+    id: 'italian-lotto', label: 'Lotto Italia (5/90)', name: 'Lotto Italia',
+    mainPool: M(1, 90, 5), bonusPools: [], drawOrder: ['main'],
     resultLayout: { groups: [group('main', 'Основные', 5)] },
   },
 };
 
-export const DEFAULT_PROFILE = 'eurojackpot';
+export const DEFAULT_PROFILE = DEFAULT_GAME_ID;
 
 /** All pools of a profile keyed by id (main + bonus). */
 export function poolsOf(profile) {
@@ -167,4 +130,18 @@ export function assertValidProfiles(profiles = GAME_PROFILES) {
     all.push(...validateProfile(profiles[key]));
   }
   if (all.length) throw new Error('Invalid game profile(s):\n  ' + all.join('\n  '));
+}
+
+/** The drum's public game set must equal the canonical registry EXACTLY — same
+ *  count, same ids, no duplicates, no missing, no extras. Throws otherwise, so the
+ *  drum can never silently drift from the main app's game list. */
+export function assertRegistryConsistency(profiles = GAME_PROFILES, canonicalIds = CANONICAL_GAME_IDS) {
+  const drumIds = Object.keys(profiles);
+  const errs = [];
+  if (new Set(drumIds).size !== drumIds.length) errs.push('duplicate drum profile ids');
+  const setC = new Set(canonicalIds), setD = new Set(drumIds);
+  for (const id of canonicalIds) if (!setD.has(id)) errs.push(`missing drum profile for canonical game "${id}"`);
+  for (const id of drumIds) if (!setC.has(id)) errs.push(`extra drum profile "${id}" not in canonical registry`);
+  if (drumIds.length !== canonicalIds.length) errs.push(`drum profile count ${drumIds.length} ≠ canonical ${canonicalIds.length}`);
+  if (errs.length) throw new Error('Drum ↔ canonical registry mismatch:\n  ' + errs.join('\n  '));
 }
