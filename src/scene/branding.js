@@ -10,14 +10,14 @@
 import * as THREE from 'three';
 import { CONFIG } from '../config.js';
 
-/** Derive a clean wordmark ("EUROJACKPOT", "NORSK LOTTO", "LOTTO") from a profile
- *  label like "Eurojackpot (5/50 + 2/12)" or "Lotto 6/36 (тест)". */
+/** Derive a clean wordmark ("EUROJACKPOT", "NORSK LOTTO") from a profile label like
+ *  "Eurojackpot (5/50 + 2/12)" or "Norsk Lotto — 7/34 + 1 tilleggstall". */
 function brandOf(label) {
-  return String(label || '')
-    .split('(')[0]           // drop the "(5/50 …)" descriptor
-    .replace(/[\d/].*$/, '') // drop trailing numbers/ratios ("Lotto 6/36" → "Lotto ")
+  return (String(label || '')
+    .split(/[(—]/)[0]        // drop the "(5/50 …)" or "— 7/34 …" descriptor
+    .replace(/[\d/].*$/, '') // drop any trailing numbers/ratios
     .trim()
-    .toUpperCase() || 'LOTO';
+    .toUpperCase()) || 'LOTO';
 }
 
 function bannerTexture(brand, accent) {

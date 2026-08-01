@@ -9,7 +9,7 @@
  */
 import * as THREE from 'three';
 import { CONFIG } from './config.js';
-import { GAME_PROFILES, DEFAULT_PROFILE } from './games.js';
+import { GAME_PROFILES, DEFAULT_PROFILE, assertValidProfiles, validateProfile, poolSize, totalDrawnOf } from './games.js';
 import { FrameStats } from './util/stats.js';
 import { QualityManager } from './engine/quality.js';
 import { RenderEngine } from './engine/renderer.js';
@@ -34,6 +34,10 @@ async function main() {
   const canvas = document.getElementById('stage');
   const debug = params.get('debug') === '1';
   const debugPhysics = params.get('debugPhysics') === '1';
+
+  // Startup schema validation: refuse to run with a mis-configured lottery rule
+  // (wrong range/counts, drawing more than exist, rack/queue mismatch, …).
+  assertValidProfiles();
 
   try { await initRapier(); }
   catch (e) { fail('Failed to initialise physics engine.'); throw e; }
@@ -226,6 +230,67 @@ async function main() {
       }
       console.log(`FAIRTEST profile=${profileKey} N=${done} noCapture=${noCapture} K=${K} exp=${exp.toFixed(2)} chiSquare=${chi.toFixed(1)} df=${K - 1} maxRelDev=${(maxdev * 100).toFixed(1)}% avgWinnerHeightPct=${(sumHpct / done).toFixed(3)} avgWinnerExitProximityPct=${(sumEpct / done).toFixed(3)} avgCaptureSteps=${(sumSteps / done).toFixed(0)}`);
       console.log(`FAIRFREQ min=${pool.min} counts=${JSON.stringify(rows)}`);
+      return;
+    }
+
+    // Game-rule audit: structural schema assertions + N complete draws proving the
+    // physical balls, counts, ranges, conservation and UP-TO-DATE UI all match the
+    // canonical profile (e.g. Norsk Lotto = 34 balls, 7 main + 1 tilleggstall from
+    // the same pool, 26 left, nothing > 34, additional ≠ main, UI == physical rack).
+    if (shot === 'ruletest') {
+      const profile = GAME_PROFILES[profileKey];
+      const N = parseInt(params.get('n') || '100', 10);
+      const struct = validateProfile(profile);
+      const mainPool = profile.mainPool;
+      const mainSize = poolSize(mainPool), mainDraw = mainPool.drawCount, totalDraw = totalDrawnOf(profile);
+      const sameMainDraws = profile.bonusPools.filter((b) => b.strategy === 'same-main-pool').reduce((a, b) => a + b.drawCount, 0);
+      const lastPid = profile.drawOrder[profile.drawOrder.length - 1];
+      const lastPool = profile.bonusPools.find((b) => b.id === lastPid);
+      const expectInside = (lastPool && lastPool.strategy === 'separate-pool')
+        ? poolSize(lastPool) - lastPool.drawCount : mainSize - (mainDraw + sameMainDraws);
+      let pass = 0; const fails = [];
+      for (let d = 0; d < N; d++) {
+        const errs = [];
+        draw.loadProfile(profile);
+        const init = balls.items.filter((it) => !it.parked && !it.drawn).map((it) => it.value);
+        if (init.length !== mainSize) errs.push(`initial ${init.length}≠${mainSize}`);
+        if (new Set(init).size !== init.length) errs.push('initial dup#');
+        if (init.some((v) => v < mainPool.min || v > mainPool.max)) errs.push('initial out-of-range');
+        draw.start();
+        let steps = 0, ok = false;
+        for (; steps < 8000; steps++) {
+          stepSim(dt);
+          const parked = balls.items.filter((it) => it.parked).length;
+          const pub = Object.values(draw.resultsByPool).reduce((a, arr) => a + arr.length, 0);
+          if (parked >= totalDraw && pub >= totalDraw
+            && (draw.state === State.STOPPING || draw.state === State.FINAL_SETTLING || draw.state === State.COMPLETE)) { ok = true; break; }
+        }
+        if (!ok) { fails.push(`#${d}: did not complete`); continue; }
+        const parked = balls.items.filter((it) => it.parked);
+        const inside = balls.items.filter((it) => !it.parked && !it.drawn);
+        if (parked.length !== totalDraw) errs.push(`parked ${parked.length}≠${totalDraw}`);
+        if (inside.length !== expectInside) errs.push(`inside ${inside.length}≠${expectInside}`);
+        const ids = balls.items.map((it) => it.id);
+        if (new Set(ids).size !== ids.length) errs.push('dup objIDs');
+        // Per result group: UI numbers must equal the physical rack balls of that group.
+        for (const g of profile.resultLayout.groups) {
+          const ui = [...(draw.resultsByPool[g.pool] || [])].sort((a, b) => a - b);
+          const phys = parked.filter((it) => it.resultPool === g.pool).map((it) => it.value).sort((a, b) => a - b);
+          if (ui.length !== g.slotCount) errs.push(`${g.pool} ui ${ui.length}≠${g.slotCount}`);
+          if (JSON.stringify(ui) !== JSON.stringify(phys)) errs.push(`${g.pool} UI≠rack ${JSON.stringify(ui)}/${JSON.stringify(phys)}`);
+          if (new Set(phys).size !== phys.length) errs.push(`${g.pool} dup#`);
+          if (phys.some((v) => v < mainPool.min || v > mainPool.max) && lastPid !== g.pool && !profile.bonusPools.find((b) => b.id === g.pool && b.strategy === 'separate-pool')) errs.push(`${g.pool} >range`);
+        }
+        // same-main-pool bonus number must NOT be one of the main numbers.
+        for (const b of profile.bonusPools) if (b.strategy === 'same-main-pool') {
+          const mainNums = new Set(draw.resultsByPool.main || []);
+          if ((draw.resultsByPool[b.id] || []).some((v) => mainNums.has(v))) errs.push(`${b.id}∈main`);
+        }
+        try { balls.assertConservation(); } catch (ex) { errs.push('conservation:' + ex.message); }
+        if (errs.length) fails.push(`#${d}: ${errs.join(',')}`); else pass++;
+      }
+      console.log(`RULETEST profile=${profileKey} runs=${N} structErrs=${JSON.stringify(struct)} mainSize=${mainSize} totalDraw=${totalDraw} expectInside=${expectInside} pass=${pass} fail=${fails.length}`);
+      for (const f of fails.slice(0, 12)) console.log(`RULEFAIL ${f}`);
       return;
     }
 
